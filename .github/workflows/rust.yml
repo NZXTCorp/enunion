@@ -1,0 +1,40 @@
+name: Rust
+
+on:
+  push:
+    branches: [ main, beta, "+([0-9])?(.{+([0-9]),x}).x", next, next-major, alpha, "*-adhoc-*" ]
+  pull_request:
+    branches: [ main, beta, "+([0-9])?(.{+([0-9]),x}).x", next, next-major, alpha, "*-adhoc-*" ]
+
+# If a newer commit triggers an action on a given ref, cancel any previous pending or in-progress action
+concurrency:
+  group: ${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v2
+      - name: Ensure Rust is up to date
+        uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: stable
+          components: clippy
+      - name: Format
+        run: cargo fmt --verbose -- --check
+      - name: Run clippy
+        run: cargo clippy --verbose --deny-warnings --locked
+      - name: Npm
+        working-directory: ./enunion-test
+        run: npm ci
+      - name: Install enunion-post-build
+        run: cd enunion-post-build && cargo install --path . && cd ..
+      - name: Build and test
+        run: cd enunion-test && npm run build && npm run test && cd ..
