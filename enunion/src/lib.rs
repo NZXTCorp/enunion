@@ -53,7 +53,7 @@ use syn::{
 ///
 /// # Example
 ///
-/// ```ignore
+/// ```
 /// #[enunion::enunion]
 /// pub enum Foo {
 ///     Bar,
