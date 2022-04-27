@@ -1,58 +1,58 @@
+use itertools::Itertools;
 use proc_macro::TokenStream;
 use proc_macro2::Span;
 use proc_macro_error::abort_call_site;
 use quote::{format_ident, quote, ToTokens};
+use std::env::var;
+use std::fmt::Write as _;
+use std::fs::{create_dir_all, File};
+use std::io::Write;
+use std::path::PathBuf;
 use syn::{
     parse::{Parse, ParseStream},
     punctuated::Punctuated,
     token::{Brace, Comma, Pub},
     Field, Fields, Ident, ItemEnum, Lit, MetaNameValue, Variant, VisPublic,
 };
-use itertools::Itertools;
-use std::path::PathBuf;
-use std::fs::{create_dir_all, File};
-use std::fmt::Write as _;
-use std::io::Write;
-use std::env::var;
 
 /// This macro is applied to Rust enums. It generates code that will expose the enum to TypeScript as a discriminated union. It uses `napi` to accomplish this.
 /// Enunion also handles automatically converting between the two representations, in Rust you can define `#[napi]` methods that accept the enum as an argument, or return an instance of that enum.
 /// The TypeScript will be free to handle it as a discriminated union, the Rust can handle it as an enum, and enunion will take care of translating at the boundary.
-/// 
+///
 /// **This macro will not work if `napi` and `napi_derive` are not specified in the `[dependencies]` section of the `Cargo.toml`.**
-/// 
+///
 /// This macro has a companion program called `enunion-post-build` which must be executed in the directory after `napi build` has been called. Otherwise the resulting TypeScript will not compile.
 /// One simple way to ensure this happens is with a `"postbuild"` script in `package.json` like so
-/// 
+///
 /// ```json
 /// "scripts": {
 ///   "build": "napi build --platform --release",
 ///   "postbuild": "enunion-post-build",
 /// },
 /// ```
-/// 
+///
 /// To install `enunion-post-build` execute this
-/// 
+///
 /// ```
 /// cargo install enunion-post-build
 /// ```
-/// 
+///
 /// # Params
 /// - `discriminant_repr`: The representation used by the discriminant field, either "i64" or "str". Default: "i64"
 /// - `discriminant_field_name`: The name of the discriminant field. Can be overridden here if you don't like the default. Default: `<enum_name>_type`, where `<enum_name>` is the name of your enum.
 /// This will be converted to lowerCamelCase in the TypeScript file.
-/// 
+///
 /// # Example Invocations
 /// `#[enunion::enunion]`
-/// 
+///
 /// `#[enunion::enunion(discriminant_repr = "str")]`
-/// 
+///
 /// `#[enunion::enunion(discriminant_field_name = "my_type")]`
-/// 
+///
 /// `#[enunion::enunion(discriminant_repr = "str", discriminant_field_name = "my_type")]`
-/// 
+///
 /// # Example
-/// 
+///
 /// ```ignore
 /// #[enunion::enunion]
 /// pub enum Foo {
@@ -64,7 +64,7 @@ use std::env::var;
 ///         my_multi_word_field: i32,
 ///     }
 /// }
-/// 
+///
 /// #[napi]
 /// pub fn take_foo(f: Foo) -> Foo {
 ///    assert!(matches!(f, Foo::Baz {a: 3, b: 2, c: _, my_multi_word_field: 2}));
@@ -143,7 +143,10 @@ pub fn enunion(attr_input: TokenStream, item: TokenStream) -> TokenStream {
         .enumerate()
         .map(|(i, v)| VariantData::new(&e.ident, v, repr, &discriminant_field_name, i))
         .collect::<Vec<_>>();
-    let mod_ident = format_ident!("__enunion_{}", heck::AsSnekCase(e.ident.to_string()).to_string());
+    let mod_ident = format_ident!(
+        "__enunion_{}",
+        heck::AsSnekCase(e.ident.to_string()).to_string()
+    );
     let enum_ident = &e.ident;
     let struct_idents = variants
         .iter()
@@ -152,15 +155,31 @@ pub fn enunion(attr_input: TokenStream, item: TokenStream) -> TokenStream {
     // This is the NAPI internal environment variable used to find the path to write TS definitions to. If it's set, then a new file is being generated.
     if var("TYPE_DEF_TMP_PATH").is_ok() {
         // Use of a CJK dash here is intentional, since it's not a character that can be used in a cargo package name.
-        let path = PathBuf::from("enunion-generated-ts").join(&format!("{}ー{}ー{}.d.ts", var("CARGO_PKG_NAME").unwrap(), var("CARGO_PKG_VERSION").unwrap(), enum_ident));
+        let path = PathBuf::from("enunion-generated-ts").join(&format!(
+            "{}ー{}ー{}.d.ts",
+            var("CARGO_PKG_NAME").unwrap(),
+            var("CARGO_PKG_VERSION").unwrap(),
+            enum_ident
+        ));
         create_dir_all(path.parent().unwrap()).unwrap();
         let mut s = String::new();
-        writeln!(s, "type {} = {};", enum_ident, struct_idents.iter().join(" | ")).expect("Failed to write to TS output file");
+        writeln!(
+            s,
+            "type {} = {};",
+            enum_ident,
+            struct_idents.iter().join(" | ")
+        )
+        .expect("Failed to write to TS output file");
         for v in &variants {
-            writeln!(s, "export const {ident}: {value};", ident = v.const_ident, value = v.const_value_ts).expect("Failed to write to TS output file");
+            writeln!(
+                s,
+                "export const {ident}: {value};",
+                ident = v.const_ident,
+                value = v.const_value_ts
+            )
+            .expect("Failed to write to TS output file");
         }
-        let mut f = File::create(&path)
-            .expect("Failed to open TS output file");
+        let mut f = File::create(&path).expect("Failed to open TS output file");
         f.write(s.as_bytes()).unwrap();
     }
     let const_idents = variants.iter().map(|v| &v.const_ident).collect::<Vec<_>>();
@@ -247,7 +266,7 @@ pub fn enunion(attr_input: TokenStream, item: TokenStream) -> TokenStream {
                     }
                 }
             }
-    
+
             impl ::napi::bindgen_prelude::ToNapiValue for super::#enum_ident {
                 unsafe fn to_napi_value(__enunion_env: ::napi::sys::napi_env, val: Self) -> ::napi::bindgen_prelude::Result<::napi::sys::napi_value> {
                     match &val {
@@ -343,7 +362,10 @@ impl<'a> VariantData<'a> {
                 let i: i64 = variant_index.try_into().expect("too many variants!");
                 (quote! { #i }, i.to_string())
             }
-            DiscriminantRepr::String => (quote! { stringify!(#const_ident) }, format!("\"{}\"", const_ident)),
+            DiscriminantRepr::String => (
+                quote! { stringify!(#const_ident) },
+                format!("\"{}\"", const_ident),
+            ),
         };
         let mut enum_field_tokens = fields
             .iter()

@@ -1,5 +1,5 @@
-use std::io::Write;
 use std::fmt::Write as _;
+use std::io::Write;
 
 fn main() {
     let mut out_ts = match std::fs::OpenOptions::new().append(true).open("index.d.ts") {
