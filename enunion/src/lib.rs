@@ -180,7 +180,7 @@ pub fn enunion(attr_input: TokenStream, item: TokenStream) -> TokenStream {
             .expect("Failed to write to TS output file");
         }
         let mut f = File::create(&path).expect("Failed to open TS output file");
-        f.write(s.as_bytes()).unwrap();
+        f.write_all(s.as_bytes()).unwrap();
     }
     let const_idents = variants.iter().map(|v| &v.const_ident).collect::<Vec<_>>();
     let const_values = variants.iter().map(|v| &v.const_value);

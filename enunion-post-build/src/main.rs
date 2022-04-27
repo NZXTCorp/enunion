@@ -22,7 +22,7 @@ fn main() {
         writeln!(s, "{}", c).unwrap();
     }
     writeln!(s, "// -- END ENUNION GENERATED CODE --").unwrap();
-    out_ts.write(s.as_bytes()).unwrap();
+    out_ts.write_all(s.as_bytes()).unwrap();
     std::fs::remove_dir_all("enunion-generated-ts").unwrap();
     println!("TypeScript files merged successfully!");
 }

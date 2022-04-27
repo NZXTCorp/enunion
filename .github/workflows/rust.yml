@@ -30,7 +30,7 @@ jobs:
       - name: Format
         run: cargo fmt --verbose -- --check
       - name: Run clippy
-        run: cargo clippy --verbose --deny-warnings --locked
+        run: cargo clippy --verbose --locked -- -D warnings
       - name: Npm
         working-directory: ./enunion-test
         run: npm ci
