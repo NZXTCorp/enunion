@@ -1,0 +1,7 @@
+[workspace]
+members = [
+    "enunion",
+    "enunion-post-build",
+]
+exclude = ["enunion-test"]
+resolver = "2"
