@@ -1,13 +1,13 @@
-import { takeFoo, takeFooDefault, takeFooString } from "../index";
+import { takeFoo, takeFooDefault, takeFooString, FOO_TYPE_BAZ, FOO_STRING_TYPE_BAR, DEFAULT_FOO_TYPE_BAR } from "../index";
 
 it("calls takeFooDefault", () => {
-  expect(takeFooDefault({ defaultFooType: 0 }).defaultFooType).toBe(2);
+  expect(takeFooDefault({ defaultFooType: DEFAULT_FOO_TYPE_BAR }).defaultFooType).toBe(2);
 });
 
 it("calls takeFooString", () => {
   expect(
-    takeFooString({ fooStringType: "FOO_STRING_TYPE_BAR" }).fooStringType
-  ).toBe("FOO_STRING_TYPE_BAR");
+    takeFooString({ fooStringType: FOO_STRING_TYPE_BAR }).fooStringType
+  ).toBe(FOO_STRING_TYPE_BAR);
 });
 
 it("calls takeFoo", () => {
@@ -16,10 +16,10 @@ it("calls takeFoo", () => {
     b: 2,
     c: "Hello World",
     myMultiWordField: 2,
-    fooType: 1,
+    fooType: FOO_TYPE_BAZ,
   });
-  expect(r.fooType).toBe(1);
-  if (r.fooType === 1) {
+  expect(r.fooType).toBe(FOO_TYPE_BAZ);
+  if (r.fooType === FOO_TYPE_BAZ) {
     expect(r.a).toBe(1);
     expect(r.b).toBe(2);
     expect(r.c).toBe("yo");

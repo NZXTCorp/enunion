@@ -155,16 +155,23 @@ pub fn enunion(attr_input: TokenStream, item: TokenStream) -> TokenStream {
     // This is the NAPI internal environment variable used to find the path to write TS definitions to. If it's set, then a new file is being generated.
     if var("TYPE_DEF_TMP_PATH").is_ok() {
         // Use of a CJK dash here is intentional, since it's not a character that can be used in a cargo package name.
-        let path = PathBuf::from("enunion-generated-ts").join(&format!(
+        let ts_path = PathBuf::from("enunion-generated-ts").join(&format!(
             "{}ー{}ー{}.d.ts",
             var("CARGO_PKG_NAME").unwrap(),
             var("CARGO_PKG_VERSION").unwrap(),
             enum_ident
         ));
-        create_dir_all(path.parent().unwrap()).unwrap();
-        let mut s = String::new();
+        let js_path = PathBuf::from("enunion-generated-ts").join(&format!(
+            "{}ー{}ー{}.js",
+            var("CARGO_PKG_NAME").unwrap(),
+            var("CARGO_PKG_VERSION").unwrap(),
+            enum_ident
+        ));
+        create_dir_all(ts_path.parent().unwrap()).unwrap();
+        let mut ts = String::new();
+        let mut js = String::new();
         writeln!(
-            s,
+            ts,
             "type {} = {};",
             enum_ident,
             struct_idents.iter().join(" | ")
@@ -172,15 +179,24 @@ pub fn enunion(attr_input: TokenStream, item: TokenStream) -> TokenStream {
         .expect("Failed to write to TS output file");
         for v in &variants {
             writeln!(
-                s,
+                ts,
                 "export const {ident}: {value};",
                 ident = v.const_ident,
                 value = v.const_value_ts
             )
             .expect("Failed to write to TS output file");
+            writeln!(
+                js,
+                "module.exports.{ident} = {value};",
+                ident = v.const_ident,
+                value = v.const_value_ts
+            )
+            .expect("Failed to write to TS output file");
         }
-        let mut f = File::create(&path).expect("Failed to open TS output file");
-        f.write_all(s.as_bytes()).unwrap();
+        let mut ts_f = File::create(&ts_path).expect("Failed to open TS output file");
+        ts_f.write_all(ts.as_bytes()).unwrap();
+        let mut js_f = File::create(&js_path).expect("Failed to open JS output file");
+        js_f.write_all(js.as_bytes()).unwrap();
     }
     let const_idents = variants.iter().map(|v| &v.const_ident).collect::<Vec<_>>();
     let const_values = variants.iter().map(|v| &v.const_value);
@@ -262,7 +278,7 @@ pub fn enunion(attr_input: TokenStream, item: TokenStream) -> TokenStream {
                     let ty: Option<#discriminant_type_dynamic> = o.get(stringify!(#discriminant_field_name_js_case))?;
                     match #ty_compare_expr {
                         #(Some(#const_idents) => Ok(<#struct_idents as Into<super::#enum_ident>>::into(#struct_idents::try_from(o)?)),)*
-                        _ => Err(::napi::Error::from_reason(format!("JS object provided was not a valid {}", stringify!(#enum_ident))))
+                        _ => Err(::napi::Error::from_reason(format!("JS object provided was not a valid {}, ty is {:?}", stringify!(#enum_ident), ty)))
                     }
                 }
             }

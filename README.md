@@ -80,10 +80,10 @@ it("calls takeFoo", () => {
     b: 2,
     c: "Hello World",
     myMultiWordField: 2,
-    fooType: 1,
+    fooType: FOO_TYPE_BAZ,
   });
-  expect(r.fooType).toBe(1);
-  if (r.fooType === 1) {
+  expect(r.fooType).toBe(FOO_TYPE_BAZ);
+  if (r.fooType === FOO_TYPE_BAZ) {
     expect(r.a).toBe(1);
     expect(r.b).toBe(2);
     expect(r.c).toBe("yo");
