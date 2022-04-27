@@ -70,3 +70,24 @@ pub fn take_foo(f: Foo) -> Foo {
     }
 }
 ```
+
+And on the TypeScript side we can consume it like so
+
+```ts
+it("calls takeFoo", () => {
+  let r = takeFoo({
+    a: 3,
+    b: 2,
+    c: "Hello World",
+    myMultiWordField: 2,
+    fooType: 1,
+  });
+  expect(r.fooType).toBe(1);
+  if (r.fooType === 1) {
+    expect(r.a).toBe(1);
+    expect(r.b).toBe(2);
+    expect(r.c).toBe("yo");
+    expect(r.myMultiWordField).toBe(8);
+  }
+});
+```
