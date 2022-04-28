@@ -60,13 +60,13 @@ pub fn take_foo(f: Foo) -> Foo {
     }
   ));
   match f {
-    Foo::Baz { c, .. } => assert_eq!(c, "Hello World"),
-    _ => unreachable!(),
+      Foo::Baz {c, ..} => assert_eq!(c, "Hello from TypeScript"),
+      _ => unreachable!(),
   }
   Foo::Baz {
-    a: 1,
-    b: 2,
-    c: String::from("yo"),
-    my_multi_word_field: 8,
+      a: 1,
+      b: 2,
+      c: String::from("Hello from Rust"),
+      my_multi_word_field: 8,
   }
 }

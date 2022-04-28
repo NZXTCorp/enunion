@@ -59,13 +59,13 @@ pub enum Foo {
 pub fn take_foo(f: Foo) -> Foo {
    assert!(matches!(f, Foo::Baz {a: 3, b: 2, c: _, my_multi_word_field: 2}));
     match f {
-        Foo::Baz {c, ..} => assert_eq!(c, "Hello World"),
+        Foo::Baz {c, ..} => assert_eq!(c, "Hello from TypeScript"),
         _ => unreachable!(),
     }
     Foo::Baz {
         a: 1,
         b: 2,
-        c: String::from("yo"),
+        c: String::from("Hello from Rust"),
         my_multi_word_field: 8,
     }
 }
@@ -78,15 +78,17 @@ it("calls takeFoo", () => {
   let r = takeFoo({
     a: 3,
     b: 2,
-    c: "Hello World",
+    c: "Hello from TypeScript",
     myMultiWordField: 2,
     fooType: FOO_TYPE_BAZ,
   });
   expect(r.fooType).toBe(FOO_TYPE_BAZ);
   if (r.fooType === FOO_TYPE_BAZ) {
+    // Thanks to type narrowing, TypeScript now allows us to access the "Baz" specific fields
+    // that don't exist on "Bar".
     expect(r.a).toBe(1);
     expect(r.b).toBe(2);
-    expect(r.c).toBe("yo");
+    expect(r.c).toBe("Hello from Rust");
     expect(r.myMultiWordField).toBe(8);
   }
 });

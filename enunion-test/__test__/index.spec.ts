@@ -14,7 +14,7 @@ it("calls takeFoo", () => {
   let r = takeFoo({
     a: 3,
     b: 2,
-    c: "Hello World",
+    c: "Hello from TypeScript",
     myMultiWordField: 2,
     fooType: FOO_TYPE_BAZ,
   });
@@ -22,7 +22,7 @@ it("calls takeFoo", () => {
   if (r.fooType === FOO_TYPE_BAZ) {
     expect(r.a).toBe(1);
     expect(r.b).toBe(2);
-    expect(r.c).toBe("yo");
+    expect(r.c).toBe("Hello from Rust");
     expect(r.myMultiWordField).toBe(8);
   }
 });
