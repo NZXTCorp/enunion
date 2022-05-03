@@ -33,14 +33,23 @@ use syn::{
 ///
 /// To install `enunion-post-build` execute this
 ///
-/// ```
+/// ```ignore
 /// cargo install enunion-post-build
 /// ```
 ///
 /// # Params
-/// - `discriminant_repr`: The representation used by the discriminant field, one of "enum", "i64", or "str". Default: "i64"
+/// - `discriminant_repr`: The representation used by the discriminant field, one of "enum", "i64", "none", or "str". Default: "i64"
 /// - `discriminant_field_name`: The name of the discriminant field. Can be overridden here if you don't like the default. Default: `<enum_name>_type`, where `<enum_name>` is the name of your enum.
 /// This will be converted to lowerCamelCase in the TypeScript file.
+///
+/// # Discriminant Representation types
+///
+/// - "enum" - Generates a companion enum and uses variants from it to discriminate the union.
+/// - "i64" - Uses non-negative whole numbers to discriminate the union variants.
+/// - "str" - Uses strings to discriminate the union variants
+/// - "none" - No discriminant is used. The type is inferred from the fields present. If this is used
+/// then no two variants should share a structure. Variants will be tried top to bottom, and the
+/// first one that succeeds will be returned.
 ///
 /// # Example Invocations
 /// `#[enunion::enunion]`
@@ -100,12 +109,15 @@ pub fn enunion(attr_input: TokenStream, item: TokenStream) -> TokenStream {
                         "enum" => {
                             repr = Some(DiscriminantRepr::Enum);
                         }
+                        "none" => {
+                            repr = Some(DiscriminantRepr::None);
+                        }
                         other => {
-                            abort_call_site!("{} is not a recognized representation, please use \"i64\", \"enum\", or \"str\"", other)
+                            abort_call_site!("{} is not a recognized representation, please use \"i64\", \"enum\", \"none\", or \"str\"", other)
                         }
                     }
                 }
-                _ => abort_call_site!("only string literals are supported for the discriminant_repr, please provide \"i64\", \"enum\", or \"str\"")
+                _ => abort_call_site!("only string literals are supported for the discriminant_repr, please provide \"i64\", \"enum\", \"none\", or \"str\"")
             },
             Some("discriminant_field_name") => 
                 match lit {
@@ -143,6 +155,12 @@ pub fn enunion(attr_input: TokenStream, item: TokenStream) -> TokenStream {
         DiscriminantRepr::Enum => {
             let i = format_ident!("{}Discriminant", e.ident.to_string()).into_token_stream();
             discriminant_enum_ident = Some(i.clone());
+            (i.clone(), i)
+        }
+        DiscriminantRepr::None => {
+            let i = quote! {
+                compile_error!("type for DiscriminantRepr::None was used, this is a bug in enunion!");
+            };
             (i.clone(), i)
         }
     };
@@ -186,21 +204,23 @@ pub fn enunion(attr_input: TokenStream, item: TokenStream) -> TokenStream {
             struct_idents.iter().join(" | ")
         )
         .expect("Failed to write to TS output file");
-        for v in &variants {
-            writeln!(
-                ts,
-                "export const {ident}: {value};",
-                ident = v.const_ident,
-                value = v.const_value_ts
-            )
-            .expect("Failed to write to TS output file");
-            writeln!(
-                js,
-                "module.exports.{ident} = {value};",
-                ident = v.const_ident,
-                value = v.const_value_ts
-            )
-            .expect("Failed to write to TS output file");
+        if repr != DiscriminantRepr::None {
+            for v in &variants {
+                writeln!(
+                    ts,
+                    "export const {ident}: {value};",
+                    ident = v.const_ident,
+                    value = v.const_value_ts
+                )
+                    .expect("Failed to write to TS output file");
+                writeln!(
+                    js,
+                    "module.exports.{ident} = {value};",
+                    ident = v.const_ident,
+                    value = v.const_value_ts
+                )
+                    .expect("Failed to write to TS output file");
+            }
         }
         let mut ts_f = File::create(&ts_path).expect("Failed to open TS output file");
         ts_f.write_all(ts.as_bytes()).unwrap();
@@ -268,6 +288,11 @@ pub fn enunion(attr_input: TokenStream, item: TokenStream) -> TokenStream {
     let ty_compare_expr = match repr {
         DiscriminantRepr::I64 | DiscriminantRepr::Enum => quote! { ty },
         DiscriminantRepr::String => quote! { ty.as_deref() },
+        DiscriminantRepr::None => {
+            quote! {
+                compile_error!("ty_compare_expr for DiscriminantRepr::None was used, this is a bug in enunion!");
+            }
+        }
     };
     let enum_pattern_tokens = variants.iter().map(|v| {
         if v.fields.is_empty() {
@@ -287,80 +312,156 @@ pub fn enunion(attr_input: TokenStream, item: TokenStream) -> TokenStream {
             }
         }
     });
-    quote! {
-        #e
+    if repr != DiscriminantRepr::None {
+        quote! {
+            #e
 
-        #[doc(hidden)]
-        mod #mod_ident {
-            use ::napi::bindgen_prelude::*;
+            #[doc(hidden)]
+            mod #mod_ident {
+                use ::napi::bindgen_prelude::*;
 
-            impl ::napi::bindgen_prelude::FromNapiValue for super::#enum_ident {
-                unsafe fn from_napi_value(__enunion_env: ::napi::sys::napi_env, __enunion_napi_val: ::napi::sys::napi_value) -> ::napi::bindgen_prelude::Result<Self> {
-                    let o = <::napi::JsObject as ::napi::bindgen_prelude::FromNapiValue>::from_napi_value(__enunion_env, __enunion_napi_val)?;
-                    let ty: Option<#discriminant_type_dynamic> = o.get(stringify!(#discriminant_field_name_js_case))?;
-                    match #ty_compare_expr {
-                        #(Some(#const_idents) => Ok(<#struct_idents as Into<super::#enum_ident>>::into(#struct_idents::try_from(o)?)),)*
-                        _ => Err(::napi::Error::from_reason(format!("JS object provided was not a valid {}, ty is {:?}", stringify!(#enum_ident), ty)))
-                    }
-                }
-            }
-
-            impl ::napi::bindgen_prelude::ToNapiValue for super::#enum_ident {
-                unsafe fn to_napi_value(__enunion_env: ::napi::sys::napi_env, val: Self) -> ::napi::bindgen_prelude::Result<::napi::sys::napi_value> {
-                    match &val {
-                        #(super::#enum_ident::#variant_idents #enum_pattern_tokens => <#struct_idents as ::napi::bindgen_prelude::ToNapiValue>::to_napi_value(__enunion_env, val.try_into().unwrap()),)*
-                    }
-                }
-            }
-
-            #discriminant_enum
-
-            #(
-                const #const_idents: #discriminant_type = #const_values;
-                #[::napi_derive::napi(object)]
-                struct #struct_idents {
-                    #struct_fields
-                    #ts_type_attrs
-                    pub #discriminant_field_name: #discriminant_type,
-                }
-
-                impl From<#struct_idents> for super::#enum_ident {
-                    fn from(s: #struct_idents) -> Self {
-                        Self::#variant_idents {
-                            #(#enum_field_idents: s.#enum_field_idents),*
-                        }
-                    }
-                }
-
-                impl TryFrom<super::#enum_ident> for #struct_idents {
-                    type Error = ContainedValueIsNotOfThatType;
-
-                    fn try_from(s: super::#enum_ident) -> ::std::result::Result<Self, Self::Error> {
-                        match s {
-                            super::#enum_ident::#variant_idents #enum_field_tokens => Ok(Self #struct_field_tokens),
-                            _ => Err(ContainedValueIsNotOfThatType),
-                        }
-                    }
-                }
-
-                impl TryFrom<::napi::JsObject> for #struct_idents {
-                    type Error = ::napi::Error;
-
-                    fn try_from(o: ::napi::JsObject) -> ::std::result::Result<Self, Self::Error> {
+                impl ::napi::bindgen_prelude::FromNapiValue for super::#enum_ident {
+                    unsafe fn from_napi_value(__enunion_env: ::napi::sys::napi_env, __enunion_napi_val: ::napi::sys::napi_value) -> ::napi::bindgen_prelude::Result<Self> {
+                        let o = <::napi::JsObject as ::napi::bindgen_prelude::FromNapiValue>::from_napi_value(__enunion_env, __enunion_napi_val)?;
                         let ty: Option<#discriminant_type_dynamic> = o.get(stringify!(#discriminant_field_name_js_case))?;
-                        if #ty_compare_expr != Some(#const_idents) {
-                            return Err(::napi::Error::from_reason(format!("provided object was not {}", stringify!(#struct_idents))));
+                        match #ty_compare_expr {
+                            #(Some(#const_idents) => Ok(<#struct_idents as Into<super::#enum_ident>>::into(#struct_idents::try_from(o)?)),)*
+                            _ => Err(::napi::Error::from_reason(format!("JS object provided was not a valid {}, ty is {:?}", stringify!(#enum_ident), ty)))
                         }
-                        Ok(Self {
-                            #(#enum_field_idents: o.get(stringify!(#js_object_field_tokens))?.ok_or_else(|| ::napi::Error::from_reason(format!("conversion to {} failed, field {} is missing", stringify!(#struct_idents), stringify!(#js_object_field_tokens))))?,)*
-                            #discriminant_field_name: #const_idents,
-                        })
                     }
                 }
-            )*
 
-            #[derive(Debug, Copy, Clone)]
-            pub struct ContainedValueIsNotOfThatType;
+                impl ::napi::bindgen_prelude::ToNapiValue for super::#enum_ident {
+                    unsafe fn to_napi_value(__enunion_env: ::napi::sys::napi_env, val: Self) -> ::napi::bindgen_prelude::Result<::napi::sys::napi_value> {
+                        match &val {
+                            #(super::#enum_ident::#variant_idents #enum_pattern_tokens => <#struct_idents as ::napi::bindgen_prelude::ToNapiValue>::to_napi_value(__enunion_env, val.try_into().unwrap()),)*
+                        }
+                    }
+                }
+
+                #discriminant_enum
+
+                #(
+                    const #const_idents: #discriminant_type = #const_values;
+                    #[::napi_derive::napi(object)]
+                    struct #struct_idents {
+                        #struct_fields
+                        #ts_type_attrs
+                        pub #discriminant_field_name: #discriminant_type,
+                    }
+
+                    impl From<#struct_idents> for super::#enum_ident {
+                        fn from(s: #struct_idents) -> Self {
+                            Self::#variant_idents {
+                                #(#enum_field_idents: s.#enum_field_idents),*
+                            }
+                        }
+                    }
+
+                    impl TryFrom<super::#enum_ident> for #struct_idents {
+                        type Error = ContainedValueIsNotOfThatType;
+
+                        fn try_from(s: super::#enum_ident) -> ::std::result::Result<Self, Self::Error> {
+                            match s {
+                                super::#enum_ident::#variant_idents #enum_field_tokens => Ok(Self #struct_field_tokens),
+                                _ => Err(ContainedValueIsNotOfThatType),
+                            }
+                        }
+                    }
+
+                    impl TryFrom<::napi::JsObject> for #struct_idents {
+                        type Error = ::napi::Error;
+
+                        fn try_from(o: ::napi::JsObject) -> ::std::result::Result<Self, Self::Error> {
+                            let ty: Option<#discriminant_type_dynamic> = o.get(stringify!(#discriminant_field_name_js_case))?;
+                            if #ty_compare_expr != Some(#const_idents) {
+                                return Err(::napi::Error::from_reason(format!("provided object was not {}", stringify!(#struct_idents))));
+                            }
+                            Ok(Self {
+                                #(#enum_field_idents: o.get(stringify!(#js_object_field_tokens))?.ok_or_else(|| ::napi::Error::from_reason(format!("conversion to {} failed, field {} is missing", stringify!(#struct_idents), stringify!(#js_object_field_tokens))))?,)*
+                                #discriminant_field_name: #const_idents,
+                            })
+                        }
+                    }
+                )*
+
+                #[derive(Debug, Copy, Clone)]
+                pub struct ContainedValueIsNotOfThatType;
+            }
+        }
+    } else {
+        quote! {
+            #e
+
+            #[doc(hidden)]
+            mod #mod_ident {
+                use ::napi::bindgen_prelude::*;
+
+                impl ::napi::bindgen_prelude::FromNapiValue for super::#enum_ident {
+                    unsafe fn from_napi_value(__enunion_env: ::napi::sys::napi_env, __enunion_napi_val: ::napi::sys::napi_value) -> ::napi::bindgen_prelude::Result<Self> {
+                        let o = <::napi::JsObject as ::napi::bindgen_prelude::FromNapiValue>::from_napi_value(__enunion_env, __enunion_napi_val)?;
+                        let mut errs = Vec::new();
+                        #(
+                            match #struct_idents::try_from(&o) {
+                                Ok(v) => {
+                                    return Ok(<#struct_idents as Into<super::#enum_ident>>::into(v));
+                                },
+                                Err(e) => {
+                                    errs.push(e);
+                                },
+                            }
+                        )*
+                        Err(::napi::Error::from_reason(format!("JS object provided was not a valid {}, no variants deserialized correctly. Errors: {:?}", stringify!(#enum_ident), errs)))
+                    }
+                }
+
+                impl ::napi::bindgen_prelude::ToNapiValue for super::#enum_ident {
+                    unsafe fn to_napi_value(__enunion_env: ::napi::sys::napi_env, val: Self) -> ::napi::bindgen_prelude::Result<::napi::sys::napi_value> {
+                        match &val {
+                            #(super::#enum_ident::#variant_idents #enum_pattern_tokens => <#struct_idents as ::napi::bindgen_prelude::ToNapiValue>::to_napi_value(__enunion_env, val.try_into().unwrap()),)*
+                        }
+                    }
+                }
+
+                #(
+                    #[::napi_derive::napi(object)]
+                    struct #struct_idents {
+                        #struct_fields
+                    }
+
+                    impl From<#struct_idents> for super::#enum_ident {
+                        fn from(s: #struct_idents) -> Self {
+                            Self::#variant_idents {
+                                #(#enum_field_idents: s.#enum_field_idents),*
+                            }
+                        }
+                    }
+
+                    impl TryFrom<super::#enum_ident> for #struct_idents {
+                        type Error = ContainedValueIsNotOfThatType;
+
+                        fn try_from(s: super::#enum_ident) -> ::std::result::Result<Self, Self::Error> {
+                            match s {
+                                super::#enum_ident::#variant_idents #enum_field_tokens => Ok(Self #enum_field_tokens),
+                                _ => Err(ContainedValueIsNotOfThatType),
+                            }
+                        }
+                    }
+
+                    impl TryFrom<&::napi::JsObject> for #struct_idents {
+                        type Error = ::napi::Error;
+
+                        fn try_from(o: &::napi::JsObject) -> ::std::result::Result<Self, Self::Error> {
+                            Ok(Self {
+                                #(#enum_field_idents: o.get(stringify!(#js_object_field_tokens))?.ok_or_else(|| ::napi::Error::from_reason(format!("conversion to {} failed, field {} is missing", stringify!(#struct_idents), stringify!(#js_object_field_tokens))))?,)*
+                            })
+                        }
+                    }
+                )*
+
+                #[derive(Debug, Copy, Clone)]
+                pub struct ContainedValueIsNotOfThatType;
+            }
         }
     }
     .into()
@@ -402,16 +503,19 @@ impl<'a> VariantData<'a> {
             DiscriminantRepr::I64 => {
                 let i: i64 = variant_index.try_into().expect("too many variants!");
                 (quote! { #i }, i.to_string())
-            }
+            },
             DiscriminantRepr::Enum => {
                 let v = &variant.ident;
                 let discriminant_enum_ident = discriminant_enum_ident.as_ref().unwrap();
                 (quote! { #discriminant_enum_ident::#v }, format!("{}.{}", discriminant_enum_ident, v))
-            }
+            },
             DiscriminantRepr::String => (
                 quote! { stringify!(#const_ident) },
                 format!("\"{}\"", const_ident),
-            )
+            ),
+            DiscriminantRepr::None => (quote! {
+                compile_error!("const_value for DiscriminantRepr::None was used, this is a bug in enunion!");
+            }, String::from("const_value_ts for DiscriminantRepr::None was used, this is a bug in enunion!"))
         };
         let mut enum_field_tokens = fields
             .iter()
@@ -452,6 +556,7 @@ enum DiscriminantRepr {
     I64,
     String,
     Enum,
+    None,
 }
 
 struct Args {

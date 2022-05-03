@@ -23,6 +23,15 @@ pub enum FooEnum {
   Baz { a: i32, b: u32, c: String },
 }
 
+#[enunion::enunion(discriminant_repr = "none")]
+pub enum FooNoDiscriminant {
+  Bar {
+      a: i32,
+      b: i32,
+  },
+  Baz { d: i32, b: u32 },
+}
+
 #[enunion::enunion(discriminant_repr = "i64", discriminant_field_name = "new_type")]
 pub enum FooNew {
   Bar,
@@ -47,6 +56,15 @@ pub enum DefaultFoo {
   Zam,
   Zoodle,
   Baz { a: i32, b: u32, c: String },
+}
+
+#[napi]
+pub fn take_foo_no_discriminant(f: FooNoDiscriminant) -> FooNoDiscriminant {
+  assert!(matches!(f, FooNoDiscriminant::Bar {a: 1, b: 2}));
+  FooNoDiscriminant::Baz {
+    d: 1,
+    b: 2,
+  }
 }
 
 #[napi]

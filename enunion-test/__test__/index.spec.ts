@@ -1,5 +1,6 @@
 import {
   takeFoo,
+  takeFooNoDiscriminant,
   takeFooEnum,
   takeFooDefault,
   takeFooString,
@@ -16,6 +17,13 @@ it("calls takeFooDefault", () => {
 
 it("calls takeFooEnum", () => {
   expect(takeFooEnum({ fooEnumType: FOO_ENUM_TYPE_BAR }).fooEnumType).toBe(FOO_ENUM_TYPE_BAR);
+});
+
+it("calls takeFooNoDiscriminant", () => {
+  let r = takeFooNoDiscriminant({ a: 1, b: 2 });
+  expect(r["d"]).toBe(1);
+  expect(r.b).toBe(2);
+  expect(Object.keys(r).length).toBe(2)
 });
 
 it("calls takeFooString", () => {
