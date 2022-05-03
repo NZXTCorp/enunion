@@ -719,5 +719,23 @@ pub fn string_enum(_attr_input: TokenStream, item: TokenStream) -> TokenStream {
                 }
             }
         }
+
+        impl ::std::fmt::Display for #enum_ident {
+            fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::result::Result<(), ::std::fmt::Error> {
+                match self {
+                    #(#enum_ident::#variant_idents => write!(f, "{}", #str_literals),)*
+                }
+            }
+        }
+
+        impl ::std::str::FromStr for #enum_ident {
+            type Err = String;
+            fn from_str(s: &str) -> ::std::result::Result<Self, Self::Err> {
+                match s {
+                    #(#str_literals => Ok(#enum_ident::#variant_idents),)*
+                    _ => Err(format!("string provided was not a valid {}, string is {:?}", stringify!(#enum_ident), s))
+                }
+            }
+        }
     }.into()
 }
