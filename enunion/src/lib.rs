@@ -38,7 +38,7 @@ use syn::{
 /// ```
 ///
 /// # Params
-/// - `discriminant_repr`: The representation used by the discriminant field, either "i64" or "str". Default: "i64"
+/// - `discriminant_repr`: The representation used by the discriminant field, one of "enum", "i64", or "str". Default: "i64"
 /// - `discriminant_field_name`: The name of the discriminant field. Can be overridden here if you don't like the default. Default: `<enum_name>_type`, where `<enum_name>` is the name of your enum.
 /// This will be converted to lowerCamelCase in the TypeScript file.
 ///
@@ -97,12 +97,15 @@ pub fn enunion(attr_input: TokenStream, item: TokenStream) -> TokenStream {
                         "str" => {
                             repr = Some(DiscriminantRepr::String);
                         }
+                        "enum" => {
+                            repr = Some(DiscriminantRepr::Enum);
+                        }
                         other => {
-                            abort_call_site!("{} is not a recognized representation, please use \"i64\" or \"str\"", other)
+                            abort_call_site!("{} is not a recognized representation, please use \"i64\", \"enum\", or \"str\"", other)
                         }
                     }
                 }
-                _ => abort_call_site!("only string literals are supported for the discriminant_repr, please provide \"i64\" or \"str\"")
+                _ => abort_call_site!("only string literals are supported for the discriminant_repr, please provide \"i64\", \"enum\", or \"str\"")
             },
             Some("discriminant_field_name") => 
                 match lit {
@@ -116,11 +119,6 @@ pub fn enunion(attr_input: TokenStream, item: TokenStream) -> TokenStream {
             }
         }
     }
-    let repr = repr.unwrap_or(DiscriminantRepr::I64);
-    let (discriminant_type, discriminant_type_dynamic) = match repr {
-        DiscriminantRepr::I64 => (quote!(i64), quote!(i64)),
-        DiscriminantRepr::String => (quote!(&'static str), quote!(String)),
-    };
 
     let e: ItemEnum = syn::parse(item).unwrap_or_else(|e| {
         abort_call_site!(
@@ -137,11 +135,22 @@ pub fn enunion(attr_input: TokenStream, item: TokenStream) -> TokenStream {
         "{}",
         heck::AsLowerCamelCase(discriminant_field_name.to_string()).to_string()
     );
+    let repr = repr.unwrap_or(DiscriminantRepr::I64);
+    let mut discriminant_enum_ident = None;
+    let (discriminant_type, discriminant_type_dynamic) = match repr {
+        DiscriminantRepr::I64 => (quote!(i64), quote!(i64)),
+        DiscriminantRepr::String => (quote!(&'static str), quote!(String)),
+        DiscriminantRepr::Enum => {
+            let i = format_ident!("{}Discriminant", e.ident.to_string()).into_token_stream();
+            discriminant_enum_ident = Some(i.clone());
+            (i.clone(), i)
+        }
+    };
     let variants = e
         .variants
         .iter()
         .enumerate()
-        .map(|(i, v)| VariantData::new(&e.ident, v, repr, &discriminant_field_name, i))
+        .map(|(i, v)| VariantData::new(&e.ident, &discriminant_enum_ident, v, repr, &discriminant_field_name, i))
         .collect::<Vec<_>>();
     let mod_ident = format_ident!(
         "__enunion_{}",
@@ -257,7 +266,7 @@ pub fn enunion(attr_input: TokenStream, item: TokenStream) -> TokenStream {
         })
         .collect::<Vec<_>>();
     let ty_compare_expr = match repr {
-        DiscriminantRepr::I64 => quote! { ty },
+        DiscriminantRepr::I64 | DiscriminantRepr::Enum => quote! { ty },
         DiscriminantRepr::String => quote! { ty.as_deref() },
     };
     let enum_pattern_tokens = variants.iter().map(|v| {
@@ -267,11 +276,24 @@ pub fn enunion(attr_input: TokenStream, item: TokenStream) -> TokenStream {
             quote! { { .. } }
         }
     });
+    let discriminant_enum = discriminant_enum_ident.map(|i| {
+        quote! {
+            #[::napi_derive::napi]
+            #[derive(Debug, Eq, PartialEq)]
+            pub enum #i {
+                #(
+                    #variant_idents
+                ),*
+            }
+        }
+    });
     quote! {
         #e
 
         #[doc(hidden)]
         mod #mod_ident {
+            use ::napi::bindgen_prelude::*;
+
             impl ::napi::bindgen_prelude::FromNapiValue for super::#enum_ident {
                 unsafe fn from_napi_value(__enunion_env: ::napi::sys::napi_env, __enunion_napi_val: ::napi::sys::napi_value) -> ::napi::bindgen_prelude::Result<Self> {
                     let o = <::napi::JsObject as ::napi::bindgen_prelude::FromNapiValue>::from_napi_value(__enunion_env, __enunion_napi_val)?;
@@ -290,6 +312,8 @@ pub fn enunion(attr_input: TokenStream, item: TokenStream) -> TokenStream {
                     }
                 }
             }
+
+            #discriminant_enum
 
             #(
                 const #const_idents: #discriminant_type = #const_values;
@@ -311,7 +335,7 @@ pub fn enunion(attr_input: TokenStream, item: TokenStream) -> TokenStream {
                 impl TryFrom<super::#enum_ident> for #struct_idents {
                     type Error = ContainedValueIsNotOfThatType;
 
-                    fn try_from(s: super::#enum_ident) -> Result<Self, Self::Error> {
+                    fn try_from(s: super::#enum_ident) -> ::std::result::Result<Self, Self::Error> {
                         match s {
                             super::#enum_ident::#variant_idents #enum_field_tokens => Ok(Self #struct_field_tokens),
                             _ => Err(ContainedValueIsNotOfThatType),
@@ -322,7 +346,7 @@ pub fn enunion(attr_input: TokenStream, item: TokenStream) -> TokenStream {
                 impl TryFrom<::napi::JsObject> for #struct_idents {
                     type Error = ::napi::Error;
 
-                    fn try_from(o: ::napi::JsObject) -> Result<Self, Self::Error> {
+                    fn try_from(o: ::napi::JsObject) -> ::std::result::Result<Self, Self::Error> {
                         let ty: Option<#discriminant_type_dynamic> = o.get(stringify!(#discriminant_field_name_js_case))?;
                         if #ty_compare_expr != Some(#const_idents) {
                             return Err(::napi::Error::from_reason(format!("provided object was not {}", stringify!(#struct_idents))));
@@ -355,6 +379,7 @@ struct VariantData<'a> {
 impl<'a> VariantData<'a> {
     pub fn new(
         enum_ident: &Ident,
+        discriminant_enum_ident: &Option<proc_macro2::TokenStream>,
         variant: &'a Variant,
         repr: DiscriminantRepr,
         discriminant_field_name: &Ident,
@@ -378,10 +403,15 @@ impl<'a> VariantData<'a> {
                 let i: i64 = variant_index.try_into().expect("too many variants!");
                 (quote! { #i }, i.to_string())
             }
+            DiscriminantRepr::Enum => {
+                let v = &variant.ident;
+                let discriminant_enum_ident = discriminant_enum_ident.as_ref().unwrap();
+                (quote! { #discriminant_enum_ident::#v }, format!("{}.{}", discriminant_enum_ident, v))
+            }
             DiscriminantRepr::String => (
                 quote! { stringify!(#const_ident) },
                 format!("\"{}\"", const_ident),
-            ),
+            )
         };
         let mut enum_field_tokens = fields
             .iter()
@@ -421,6 +451,7 @@ impl<'a> VariantData<'a> {
 enum DiscriminantRepr {
     I64,
     String,
+    Enum,
 }
 
 struct Args {

@@ -1,7 +1,21 @@
-import { takeFoo, takeFooDefault, takeFooString, FOO_TYPE_BAZ, FOO_STRING_TYPE_BAR, DEFAULT_FOO_TYPE_BAR } from "../index";
+import {
+  takeFoo,
+  takeFooEnum,
+  takeFooDefault,
+  takeFooString,
+  FOO_TYPE_BAZ,
+  FOO_STRING_TYPE_BAR,
+  DEFAULT_FOO_TYPE_BAR,
+  FOO_ENUM_TYPE_BAR,
+  DEFAULT_FOO_TYPE_ZOODLE
+} from "../index";
 
 it("calls takeFooDefault", () => {
-  expect(takeFooDefault({ defaultFooType: DEFAULT_FOO_TYPE_BAR }).defaultFooType).toBe(2);
+  expect(takeFooDefault({ defaultFooType: DEFAULT_FOO_TYPE_BAR }).defaultFooType).toBe(DEFAULT_FOO_TYPE_ZOODLE);
+});
+
+it("calls takeFooEnum", () => {
+  expect(takeFooEnum({ fooEnumType: FOO_ENUM_TYPE_BAR }).fooEnumType).toBe(FOO_ENUM_TYPE_BAR);
 });
 
 it("calls takeFooString", () => {

@@ -17,6 +17,12 @@ pub enum FooString {
   Baz { a: i32, b: u32, c: String },
 }
 
+#[enunion::enunion(discriminant_repr = "enum")]
+pub enum FooEnum {
+  Bar,
+  Baz { a: i32, b: u32, c: String },
+}
+
 #[enunion::enunion(discriminant_repr = "i64", discriminant_field_name = "new_type")]
 pub enum FooNew {
   Bar,
@@ -29,12 +35,24 @@ pub enum FooStringNew {
   Baz { a: i32, b: u32, c: String },
 }
 
+#[enunion::enunion(discriminant_repr = "enum", discriminant_field_name = "new_type")]
+pub enum FooEnumNew {
+  Bar,
+  Baz { a: i32, b: u32, c: String },
+}
+
 #[enunion::enunion]
 pub enum DefaultFoo {
   Bar,
   Zam,
   Zoodle,
   Baz { a: i32, b: u32, c: String },
+}
+
+#[napi]
+pub fn take_foo_enum(f: FooEnum) -> FooEnum {
+  assert!(matches!(f, FooEnum::Bar));
+  FooEnum::Bar
 }
 
 #[napi]
