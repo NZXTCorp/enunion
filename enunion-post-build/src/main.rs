@@ -24,6 +24,9 @@ fn main() {
             return;
         }
     };
+    let mut read_dir_iter = read_dir_iter.collect::<Vec<_>>();
+    // Sort in alphabetical order so that output order can be controlled with prefixes.
+    read_dir_iter.sort_unstable_by_key(|d| d.as_ref().ok().map(|d| d.path().display().to_string()));
     let mut ts = String::from("// -- BEGIN ENUNION GENERATED CODE --\n\n");
     let mut js = String::from("// -- BEGIN ENUNION GENERATED CODE --\n\n");
     for f in read_dir_iter {

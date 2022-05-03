@@ -23,6 +23,12 @@ pub enum FooEnum {
   Baz { a: i32, b: u32, c: String },
 }
 
+#[enunion::enunion(discriminant_repr = "enum_str")]
+pub enum FooEnumStr {
+  Bar,
+  Baz { a: i32, b: u32, c: String },
+}
+
 #[enunion::enunion(discriminant_repr = "none")]
 pub enum FooNoDiscriminant {
   Bar { a: i32, b: i32 },
@@ -43,6 +49,12 @@ pub enum FooStringNew {
 
 #[enunion::enunion(discriminant_repr = "enum", discriminant_field_name = "new_type")]
 pub enum FooEnumNew {
+  Bar,
+  Baz { a: i32, b: u32, c: String },
+}
+
+#[enunion::enunion(discriminant_repr = "enum_str", discriminant_field_name = "new_type")]
+pub enum FooEnumStrNew {
   Bar,
   Baz { a: i32, b: u32, c: String },
 }
@@ -78,6 +90,12 @@ pub fn take_foo_no_discriminant(f: FooNoDiscriminant) -> FooNoDiscriminant {
 pub fn take_foo_enum(f: FooEnum) -> FooEnum {
   assert!(matches!(f, FooEnum::Bar));
   FooEnum::Bar
+}
+
+#[napi]
+pub fn take_foo_enum_str(f: FooEnumStr) -> FooEnumStr {
+  assert!(matches!(f, FooEnumStr::Bar));
+  FooEnumStr::Bar
 }
 
 #[napi]

@@ -8,7 +8,12 @@ use std::fmt::Write as _;
 use std::fs::{create_dir_all, File};
 use std::io::Write;
 use std::path::PathBuf;
-use syn::{parse::{Parse, ParseStream}, punctuated::Punctuated, token::{Brace, Comma, Pub}, Field, Fields, Ident, ItemEnum, Lit, MetaNameValue, Variant, VisPublic, Expr, ExprLit};
+use syn::{
+    parse::{Parse, ParseStream},
+    punctuated::Punctuated,
+    token::{Brace, Comma, Pub},
+    Expr, ExprLit, Field, Fields, Ident, ItemEnum, Lit, MetaNameValue, Variant, VisPublic,
+};
 
 /// This macro is applied to Rust enums. It generates code that will expose the enum to TypeScript as a discriminated union. It uses `napi` to accomplish this.
 /// Enunion also handles automatically converting between the two representations, in Rust you can define `#[napi]` methods that accept the enum as an argument, or return an instance of that enum.
@@ -33,13 +38,14 @@ use syn::{parse::{Parse, ParseStream}, punctuated::Punctuated, token::{Brace, Co
 /// ```
 ///
 /// # Params
-/// - `discriminant_repr`: The representation used by the discriminant field, one of "enum", "i64", "none", or "str". Default: "i64"
+/// - `discriminant_repr`: The representation used by the discriminant field, one of "enum", "enum_str", "i64", "none", or "str". Default: "i64"
 /// - `discriminant_field_name`: The name of the discriminant field. Can be overridden here if you don't like the default. Default: `<enum_name>_type`, where `<enum_name>` is the name of your enum.
 /// This will be converted to lowerCamelCase in the TypeScript file.
 ///
 /// # Discriminant Representation types
 ///
 /// - "enum" - Generates a companion enum and uses variants from it to discriminate the union.
+/// - "enum_str" - Generates a companion string enum and uses variants from it to discriminate the union.
 /// - "i64" - Uses non-negative whole numbers to discriminate the union variants.
 /// - "str" - Uses strings to discriminate the union variants
 /// - "none" - No discriminant is used. The type is inferred from the fields present. If this is used
@@ -104,15 +110,18 @@ pub fn enunion(attr_input: TokenStream, item: TokenStream) -> TokenStream {
                         "enum" => {
                             repr = Some(DiscriminantRepr::Enum);
                         }
+                        "enum_str" => {
+                            repr = Some(DiscriminantRepr::EnumStr);
+                        }
                         "none" => {
                             repr = Some(DiscriminantRepr::None);
                         }
                         other => {
-                            abort_call_site!("{} is not a recognized representation, please use \"i64\", \"enum\", \"none\", or \"str\"", other)
+                            abort_call_site!("{} is not a recognized representation, please use \"i64\", \"enum\", \"enum_str\", \"none\", or \"str\"", other)
                         }
                     }
                 }
-                _ => abort_call_site!("only string literals are supported for the discriminant_repr, please provide \"i64\", \"enum\", \"none\", or \"str\"")
+                _ => abort_call_site!("only string literals are supported for the discriminant_repr, please provide \"i64\", \"enum\", \"enum_str\", \"none\", or \"str\"")
             },
             Some("discriminant_field_name") => 
                 match lit {
@@ -147,7 +156,7 @@ pub fn enunion(attr_input: TokenStream, item: TokenStream) -> TokenStream {
     let (discriminant_type, discriminant_type_dynamic) = match repr {
         DiscriminantRepr::I64 => (quote!(i64), quote!(i64)),
         DiscriminantRepr::String => (quote!(&'static str), quote!(String)),
-        DiscriminantRepr::Enum => {
+        DiscriminantRepr::Enum | DiscriminantRepr::EnumStr => {
             let i = format_ident!("{}Discriminant", e.ident.to_string()).into_token_stream();
             discriminant_enum_ident = Some(i.clone());
             (i.clone(), i)
@@ -163,7 +172,16 @@ pub fn enunion(attr_input: TokenStream, item: TokenStream) -> TokenStream {
         .variants
         .iter()
         .enumerate()
-        .map(|(i, v)| VariantData::new(&e.ident, &discriminant_enum_ident, v, repr, &discriminant_field_name, i))
+        .map(|(i, v)| {
+            VariantData::new(
+                &e.ident,
+                &discriminant_enum_ident,
+                v,
+                repr,
+                &discriminant_field_name,
+                i,
+            )
+        })
         .collect::<Vec<_>>();
     let mod_ident = format_ident!(
         "__enunion_{}",
@@ -207,14 +225,27 @@ pub fn enunion(attr_input: TokenStream, item: TokenStream) -> TokenStream {
                     ident = v.const_ident,
                     value = v.const_value_ts
                 )
-                    .expect("Failed to write to TS output file");
-                writeln!(
-                    js,
-                    "module.exports.{ident} = {value};",
-                    ident = v.const_ident,
-                    value = v.const_value_ts
-                )
-                    .expect("Failed to write to TS output file");
+                .expect("Failed to write to TS output file");
+                match repr {
+                    DiscriminantRepr::Enum | DiscriminantRepr::EnumStr => {
+                        writeln!(
+                            js,
+                            "module.exports.{ident} = module.exports.{value};",
+                            ident = v.const_ident,
+                            value = v.const_value_ts
+                        )
+                        .expect("Failed to write to TS output file");
+                    }
+                    _ => {
+                        writeln!(
+                            js,
+                            "module.exports.{ident} = {value};",
+                            ident = v.const_ident,
+                            value = v.const_value_ts
+                        )
+                        .expect("Failed to write to TS output file");
+                    }
+                }
             }
         }
         let mut ts_f = File::create(&ts_path).expect("Failed to open TS output file");
@@ -281,7 +312,7 @@ pub fn enunion(attr_input: TokenStream, item: TokenStream) -> TokenStream {
         })
         .collect::<Vec<_>>();
     let ty_compare_expr = match repr {
-        DiscriminantRepr::I64 | DiscriminantRepr::Enum => quote! { ty },
+        DiscriminantRepr::I64 | DiscriminantRepr::Enum | DiscriminantRepr::EnumStr => quote! { ty },
         DiscriminantRepr::String => quote! { ty.as_deref() },
         DiscriminantRepr::None => {
             quote! {
@@ -297,13 +328,25 @@ pub fn enunion(attr_input: TokenStream, item: TokenStream) -> TokenStream {
         }
     });
     let discriminant_enum = discriminant_enum_ident.map(|i| {
-        quote! {
-            #[::napi_derive::napi]
-            #[derive(Debug, Eq, PartialEq)]
-            pub enum #i {
-                #(
-                    #variant_idents
-                ),*
+        if DiscriminantRepr::EnumStr == repr {
+            quote! {
+                #[::enunion::string_enum]
+                #[derive(Debug, Eq, PartialEq)]
+                pub enum #i {
+                    #(
+                        #variant_idents
+                    ),*
+                }
+            }
+        } else {
+            quote! {
+                #[::napi_derive::napi]
+                #[derive(Debug, Eq, PartialEq)]
+                pub enum #i {
+                    #(
+                        #variant_idents
+                    ),*
+                }
             }
         }
     });
@@ -498,19 +541,27 @@ impl<'a> VariantData<'a> {
             DiscriminantRepr::I64 => {
                 let i: i64 = variant_index.try_into().expect("too many variants!");
                 (quote! { #i }, i.to_string())
-            },
-            DiscriminantRepr::Enum => {
+            }
+            DiscriminantRepr::Enum | DiscriminantRepr::EnumStr => {
                 let v = &variant.ident;
                 let discriminant_enum_ident = discriminant_enum_ident.as_ref().unwrap();
-                (quote! { #discriminant_enum_ident::#v }, format!("{}.{}", discriminant_enum_ident, v))
-            },
+                (
+                    quote! { #discriminant_enum_ident::#v },
+                    format!("{}.{}", discriminant_enum_ident, v),
+                )
+            }
             DiscriminantRepr::String => (
                 quote! { stringify!(#const_ident) },
                 format!("\"{}\"", const_ident),
             ),
-            DiscriminantRepr::None => (quote! {
-                compile_error!("const_value for DiscriminantRepr::None was used, this is a bug in enunion!");
-            }, String::from("const_value_ts for DiscriminantRepr::None was used, this is a bug in enunion!"))
+            DiscriminantRepr::None => (
+                quote! {
+                    compile_error!("const_value for DiscriminantRepr::None was used, this is a bug in enunion!");
+                },
+                String::from(
+                    "const_value_ts for DiscriminantRepr::None was used, this is a bug in enunion!",
+                ),
+            ),
         };
         let mut enum_field_tokens = fields
             .iter()
@@ -551,6 +602,7 @@ enum DiscriminantRepr {
     I64,
     String,
     Enum,
+    EnumStr,
     None,
 }
 
@@ -573,28 +625,43 @@ pub fn string_enum(_attr_input: TokenStream, item: TokenStream) -> TokenStream {
             e
         )
     });
-    let str_literals = e.variants.iter().map(|v| {
-        v.discriminant.as_ref().map(|(_eq, d)| match d {
-            Expr::Lit(ExprLit { lit: Lit::Str(s), ..}) => {
-                s.value()
-            },
-            _ => abort_call_site!("string_enum only supports string literal discriminants!")
-        }).unwrap_or_else(|| v.ident.to_string())
-    })
+    let str_literals = e
+        .variants
+        .iter()
+        .map(|v| {
+            v.discriminant
+                .as_ref()
+                .map(|(_eq, d)| match d {
+                    Expr::Lit(ExprLit {
+                        lit: Lit::Str(s), ..
+                    }) => s.value(),
+                    _ => {
+                        abort_call_site!("string_enum only supports string literal discriminants!")
+                    }
+                })
+                .unwrap_or_else(|| v.ident.to_string())
+        })
         .collect::<Vec<_>>();
     let enum_ident = &e.ident;
-    let variant_idents = e.variants.iter().map(|v| v.ident.clone()).collect::<Vec<_>>();
+    let variant_idents = e
+        .variants
+        .iter()
+        .map(|v| v.ident.clone())
+        .collect::<Vec<_>>();
     // This is the NAPI internal environment variable used to find the path to write TS definitions to. If it's set, then a new file is being generated.
     if var("TYPE_DEF_TMP_PATH").is_ok() {
         // Use of a CJK dash here is intentional, since it's not a character that can be used in a cargo package name.
+
+        // Add some leading underscores so these will sort to the top (important for JS code)
         let ts_path = PathBuf::from("enunion-generated-ts").join(&format!(
-            "{}ー{}ー{}.d.ts",
+            "_{}ー{}ー{}.d.ts",
             var("CARGO_PKG_NAME").unwrap(),
             var("CARGO_PKG_VERSION").unwrap(),
             enum_ident
         ));
+
         let js_path = PathBuf::from("enunion-generated-ts").join(&format!(
-            "{}ー{}ー{}.js",
+            "_{}ー{}ー{}.js",
             var("CARGO_PKG_NAME").unwrap(),
             var("CARGO_PKG_VERSION").unwrap(),
             enum_ident
@@ -602,17 +669,9 @@ pub fn string_enum(_attr_input: TokenStream, item: TokenStream) -> TokenStream {
         create_dir_all(ts_path.parent().unwrap()).unwrap();
         let mut ts = String::new();
         let mut js = String::new();
-        writeln!(
-            ts,
-            "export enum {} {{",
-            enum_ident
-        )
+        writeln!(ts, "export const enum {} {{", enum_ident)
             .expect("Failed to write to TS output file");
-        writeln!(
-            js,
-            "module.exports.{} = {{",
-            enum_ident
-        )
+        writeln!(js, "module.exports.{} = {{", enum_ident)
             .expect("Failed to write to TS output file");
         for (i, v) in e.variants.iter().enumerate() {
             writeln!(
@@ -621,25 +680,17 @@ pub fn string_enum(_attr_input: TokenStream, item: TokenStream) -> TokenStream {
                 ident = v.ident,
                 value = str_literals[i]
             )
-                .expect("Failed to write to TS output file");
+            .expect("Failed to write to TS output file");
             writeln!(
                 js,
                 "  {ident}: \"{value}\",",
                 ident = v.ident,
                 value = str_literals[i]
             )
-                .expect("Failed to write to JS output file");
-        }
-        writeln!(
-            js,
-            "}};"
-        )
             .expect("Failed to write to JS output file");
-        writeln!(
-            ts,
-            "}}"
-        )
-            .expect("Failed to write to TS output file");
+        }
+        writeln!(js, "}};").expect("Failed to write to JS output file");
+        writeln!(ts, "}}").expect("Failed to write to TS output file");
         let mut ts_f = File::create(&ts_path).expect("Failed to open TS output file");
         ts_f.write_all(ts.as_bytes()).unwrap();
         let mut js_f = File::create(&js_path).expect("Failed to open JS output file");
