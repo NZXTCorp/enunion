@@ -4,26 +4,36 @@ import {
   takeFooEnum,
   takeFooDefault,
   takeFooString,
+  takeStringTest,
   FOO_TYPE_BAZ,
   FOO_STRING_TYPE_BAR,
   DEFAULT_FOO_TYPE_BAR,
   FOO_ENUM_TYPE_BAR,
-  DEFAULT_FOO_TYPE_ZOODLE
+  DEFAULT_FOO_TYPE_ZOODLE,
+  StringTest,
 } from "../index";
 
+it("calls takeStringTest", () => {
+  expect(takeStringTest(StringTest.Bar)).toBe(StringTest.Baz);
+});
+
 it("calls takeFooDefault", () => {
-  expect(takeFooDefault({ defaultFooType: DEFAULT_FOO_TYPE_BAR }).defaultFooType).toBe(DEFAULT_FOO_TYPE_ZOODLE);
+  expect(
+    takeFooDefault({ defaultFooType: DEFAULT_FOO_TYPE_BAR }).defaultFooType
+  ).toBe(DEFAULT_FOO_TYPE_ZOODLE);
 });
 
 it("calls takeFooEnum", () => {
-  expect(takeFooEnum({ fooEnumType: FOO_ENUM_TYPE_BAR }).fooEnumType).toBe(FOO_ENUM_TYPE_BAR);
+  expect(takeFooEnum({ fooEnumType: FOO_ENUM_TYPE_BAR }).fooEnumType).toBe(
+    FOO_ENUM_TYPE_BAR
+  );
 });
 
 it("calls takeFooNoDiscriminant", () => {
   let r = takeFooNoDiscriminant({ a: 1, b: 2 });
   expect(r["d"]).toBe(1);
   expect(r.b).toBe(2);
-  expect(Object.keys(r).length).toBe(2)
+  expect(Object.keys(r).length).toBe(2);
 });
 
 it("calls takeFooString", () => {

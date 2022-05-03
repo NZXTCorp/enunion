@@ -8,12 +8,7 @@ use std::fmt::Write as _;
 use std::fs::{create_dir_all, File};
 use std::io::Write;
 use std::path::PathBuf;
-use syn::{
-    parse::{Parse, ParseStream},
-    punctuated::Punctuated,
-    token::{Brace, Comma, Pub},
-    Field, Fields, Ident, ItemEnum, Lit, MetaNameValue, Variant, VisPublic,
-};
+use syn::{parse::{Parse, ParseStream}, punctuated::Punctuated, token::{Brace, Comma, Pub}, Field, Fields, Ident, ItemEnum, Lit, MetaNameValue, Variant, VisPublic, Expr, ExprLit};
 
 /// This macro is applied to Rust enums. It generates code that will expose the enum to TypeScript as a discriminated union. It uses `napi` to accomplish this.
 /// Enunion also handles automatically converting between the two representations, in Rust you can define `#[napi]` methods that accept the enum as an argument, or return an instance of that enum.
@@ -567,4 +562,111 @@ impl Parse for Args {
     fn parse(input: ParseStream<'_>) -> syn::parse::Result<Self> {
         Punctuated::<_, _>::parse_terminated(input).map(|items| Args { items })
     }
+}
+
+#[proc_macro_error::proc_macro_error]
+#[proc_macro_attribute]
+pub fn string_enum(_attr_input: TokenStream, item: TokenStream) -> TokenStream {
+    let mut e: ItemEnum = syn::parse(item).unwrap_or_else(|e| {
+        abort_call_site!(
+            "string_enum only supports enums, do not use it with other Rust items. {:?}",
+            e
+        )
+    });
+    let str_literals = e.variants.iter().map(|v| {
+        v.discriminant.as_ref().map(|(_eq, d)| match d {
+            Expr::Lit(ExprLit { lit: Lit::Str(s), ..}) => {
+                s.value()
+            },
+            _ => abort_call_site!("string_enum only supports string literal discriminants!")
+        }).unwrap_or_else(|| v.ident.to_string())
+    })
+        .collect::<Vec<_>>();
+    let enum_ident = &e.ident;
+    let variant_idents = e.variants.iter().map(|v| v.ident.clone()).collect::<Vec<_>>();
+    // This is the NAPI internal environment variable used to find the path to write TS definitions to. If it's set, then a new file is being generated.
+    if var("TYPE_DEF_TMP_PATH").is_ok() {
+        // Use of a CJK dash here is intentional, since it's not a character that can be used in a cargo package name.
+        let ts_path = PathBuf::from("enunion-generated-ts").join(&format!(
+            "{}ー{}ー{}.d.ts",
+            var("CARGO_PKG_NAME").unwrap(),
+            var("CARGO_PKG_VERSION").unwrap(),
+            enum_ident
+        ));
+        let js_path = PathBuf::from("enunion-generated-ts").join(&format!(
+            "{}ー{}ー{}.js",
+            var("CARGO_PKG_NAME").unwrap(),
+            var("CARGO_PKG_VERSION").unwrap(),
+            enum_ident
+        ));
+        create_dir_all(ts_path.parent().unwrap()).unwrap();
+        let mut ts = String::new();
+        let mut js = String::new();
+        writeln!(
+            ts,
+            "export enum {} {{",
+            enum_ident
+        )
+            .expect("Failed to write to TS output file");
+        writeln!(
+            js,
+            "module.exports.{} = {{",
+            enum_ident
+        )
+            .expect("Failed to write to TS output file");
+        for (i, v) in e.variants.iter().enumerate() {
+            writeln!(
+                ts,
+                "  {ident} = \"{value}\",",
+                ident = v.ident,
+                value = str_literals[i]
+            )
+                .expect("Failed to write to TS output file");
+            writeln!(
+                js,
+                "  {ident}: \"{value}\",",
+                ident = v.ident,
+                value = str_literals[i]
+            )
+                .expect("Failed to write to JS output file");
+        }
+        writeln!(
+            js,
+            "}};"
+        )
+            .expect("Failed to write to JS output file");
+        writeln!(
+            ts,
+            "}}"
+        )
+            .expect("Failed to write to TS output file");
+        let mut ts_f = File::create(&ts_path).expect("Failed to open TS output file");
+        ts_f.write_all(ts.as_bytes()).unwrap();
+        let mut js_f = File::create(&js_path).expect("Failed to open JS output file");
+        js_f.write_all(js.as_bytes()).unwrap();
+    }
+    for v in &mut e.variants {
+        v.discriminant = None;
+    }
+    quote! {
+        #e
+
+        impl ::napi::bindgen_prelude::FromNapiValue for #enum_ident {
+            unsafe fn from_napi_value(__enunion_env: ::napi::sys::napi_env, __enunion_napi_val: ::napi::sys::napi_value) -> ::napi::bindgen_prelude::Result<Self> {
+                let v = <String as ::napi::bindgen_prelude::FromNapiValue>::from_napi_value(__enunion_env, __enunion_napi_val)?;
+                match v.as_str() {
+                    #(#str_literals => Ok(#enum_ident::#variant_idents),)*
+                    _ => Err(::napi::Error::from_reason(format!("JS string provided was not a valid {}, string is {:?}", stringify!(#enum_ident), v)))
+                }
+            }
+        }
+
+        impl ::napi::bindgen_prelude::ToNapiValue for #enum_ident {
+            unsafe fn to_napi_value(__enunion_env: ::napi::sys::napi_env, val: Self) -> ::napi::bindgen_prelude::Result<::napi::sys::napi_value> {
+                match &val {
+                    #(#enum_ident::#variant_idents => ::napi::bindgen_prelude::ToNapiValue::to_napi_value(__enunion_env, #str_literals),)*
+                }
+            }
+        }
+    }.into()
 }

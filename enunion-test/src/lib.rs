@@ -25,10 +25,7 @@ pub enum FooEnum {
 
 #[enunion::enunion(discriminant_repr = "none")]
 pub enum FooNoDiscriminant {
-  Bar {
-      a: i32,
-      b: i32,
-  },
+  Bar { a: i32, b: i32 },
   Baz { d: i32, b: u32 },
 }
 
@@ -58,13 +55,23 @@ pub enum DefaultFoo {
   Baz { a: i32, b: u32, c: String },
 }
 
+#[enunion::string_enum]
+pub enum StringTest {
+  Bar = "bar",
+  Baz = "baz",
+  Zoom,
+}
+
+#[napi]
+pub fn take_string_test(t: StringTest) -> StringTest {
+  assert!(matches!(t, StringTest::Bar));
+  StringTest::Baz
+}
+
 #[napi]
 pub fn take_foo_no_discriminant(f: FooNoDiscriminant) -> FooNoDiscriminant {
-  assert!(matches!(f, FooNoDiscriminant::Bar {a: 1, b: 2}));
-  FooNoDiscriminant::Baz {
-    d: 1,
-    b: 2,
-  }
+  assert!(matches!(f, FooNoDiscriminant::Bar { a: 1, b: 2 }));
+  FooNoDiscriminant::Baz { d: 1, b: 2 }
 }
 
 #[napi]
@@ -96,13 +103,13 @@ pub fn take_foo(f: Foo) -> Foo {
     }
   ));
   match f {
-      Foo::Baz {c, ..} => assert_eq!(c, "Hello from TypeScript"),
-      _ => unreachable!(),
+    Foo::Baz { c, .. } => assert_eq!(c, "Hello from TypeScript"),
+    _ => unreachable!(),
   }
   Foo::Baz {
-      a: 1,
-      b: 2,
-      c: String::from("Hello from Rust"),
-      my_multi_word_field: 8,
+    a: 1,
+    b: 2,
+    c: String::from("Hello from Rust"),
+    my_multi_word_field: 8,
   }
 }
