@@ -199,7 +199,7 @@ pub fn enunion(attr_input: TokenStream, item: TokenStream) -> TokenStream {
         let mut js = String::new();
         writeln!(
             ts,
-            "type {} = {};",
+            "export type {} = {};",
             enum_ident,
             struct_idents.iter().join(" | ")
         )
