@@ -194,6 +194,14 @@ pub fn enunion(attr_input: TokenStream, item: TokenStream) -> TokenStream {
         "__enunion_{}",
         heck::AsSnekCase(e.ident.to_string()).to_string()
     );
+    let init_fn_idents = struct_variants_iter().map(|(v, _v_data)| format_ident!(
+        "____napi_register__enunion_{}",
+        heck::AsSnekCase(v.ident.to_string()).to_string()
+    ));
+    let cb_names = struct_variants_iter().map(|(v, _v_data)| format_ident!(
+        "__enunion_callback_{}",
+        heck::AsSnekCase(v.ident.to_string()).to_string()
+    ));
     let enum_ident = &e.ident;
     let struct_idents = struct_variants_iter()
         .map(|(_v, v_data)| &v_data.struct_ident)
@@ -249,26 +257,12 @@ pub fn enunion(attr_input: TokenStream, item: TokenStream) -> TokenStream {
                     value = v_data.const_value_ts
                 )
                 .expect("Failed to write to TS output file");
-                match repr {
-                    DiscriminantRepr::Enum | DiscriminantRepr::EnumStr => {
-                        writeln!(
-                            js,
-                            "module.exports.{ident} = module.exports.{value};",
-                            ident = v_data.const_ident,
-                            value = v_data.const_value_ts
-                        )
-                        .expect("Failed to write to TS output file");
-                    }
-                    _ => {
-                        writeln!(
-                            js,
-                            "module.exports.{ident} = {value};",
-                            ident = v_data.const_ident,
-                            value = v_data.const_value_ts
-                        )
-                        .expect("Failed to write to TS output file");
-                    }
-                }
+                writeln!(
+                    js,
+                    "module.exports.{ident} = nativeBinding.{ident};",
+                    ident = v_data.const_ident,
+                )
+                    .expect("Failed to write to JS output file");
             }
         }
         let mut ts_f = File::create(&ts_path).expect("Failed to open TS output file");
@@ -279,7 +273,7 @@ pub fn enunion(attr_input: TokenStream, item: TokenStream) -> TokenStream {
     let const_idents = struct_variants_iter()
         .map(|(_v, v_data)| &v_data.const_ident)
         .collect::<Vec<_>>();
-    let const_values = struct_variants_iter().map(|(_v, v_data)| &v_data.const_value);
+    let const_values = struct_variants_iter().map(|(_v, v_data)| &v_data.const_value).collect::<Vec<_>>();
     let ts_type_attrs = struct_variants_iter().map(|(_v, v_data)| {
         let const_value = syn::LitStr::new(&v_data.const_value_ts.to_string(), Span::call_site());
         quote! {
@@ -444,6 +438,19 @@ pub fn enunion(attr_input: TokenStream, item: TokenStream) -> TokenStream {
                                 #discriminant_field_name: #const_idents,
                             })
                         }
+                    }
+
+                    #[allow(non_snake_case)]
+                    #[allow(clippy::all)]
+                    unsafe fn #cb_names(env: napi::sys::napi_env) -> napi::Result<napi::sys::napi_value> {
+                        <#discriminant_type as napi::bindgen_prelude::ToNapiValue>::to_napi_value(env, #const_idents)
+                    }
+                    #[allow(non_snake_case)]
+                    #[allow(clippy::all)]
+                    #[cfg(not(test))]
+                    #[::napi::bindgen_prelude::ctor]
+                    fn #init_fn_idents() {
+                        ::napi::bindgen_prelude::register_module_export(None, concat!(stringify!(#const_idents), "\0"), #cb_names);
                     }
                 )*
 
@@ -831,7 +838,7 @@ pub fn string_enum(_attr_input: TokenStream, item: TokenStream) -> TokenStream {
         let mut js = String::new();
         writeln!(ts, "export const enum {} {{", enum_ident)
             .expect("Failed to write to TS output file");
-        writeln!(js, "module.exports.{} = {{", enum_ident)
+        writeln!(js, "module.exports.{ident} = nativeBinding.{ident}", ident = enum_ident)
             .expect("Failed to write to TS output file");
         for (i, v) in e.variants.iter().enumerate() {
             writeln!(
@@ -841,15 +848,7 @@ pub fn string_enum(_attr_input: TokenStream, item: TokenStream) -> TokenStream {
                 value = str_literals[i]
             )
             .expect("Failed to write to TS output file");
-            writeln!(
-                js,
-                "  {ident}: \"{value}\",",
-                ident = v.ident,
-                value = str_literals[i]
-            )
-            .expect("Failed to write to JS output file");
         }
-        writeln!(js, "}};").expect("Failed to write to JS output file");
         writeln!(ts, "}}").expect("Failed to write to TS output file");
         let mut ts_f = File::create(&ts_path).expect("Failed to open TS output file");
         ts_f.write_all(ts.as_bytes()).unwrap();
@@ -859,6 +858,14 @@ pub fn string_enum(_attr_input: TokenStream, item: TokenStream) -> TokenStream {
     for v in &mut e.variants {
         v.discriminant = None;
     }
+    let init_fn_ident = format_ident!(
+        "____napi_register__enunion_{}",
+        heck::AsSnekCase(enum_ident.to_string()).to_string()
+    );
+    let cb_name = format_ident!(
+        "__enunion_callback_{}",
+        heck::AsSnekCase(enum_ident.to_string()).to_string()
+    );
     quote! {
         #e
 
@@ -896,6 +903,26 @@ pub fn string_enum(_attr_input: TokenStream, item: TokenStream) -> TokenStream {
                     _ => Err(format!("string provided was not a valid {}, string is {:?}", stringify!(#enum_ident), s))
                 }
             }
+        }
+
+        #[doc(hidden)]
+        #[allow(non_snake_case)]
+        #[allow(clippy::all)]
+        unsafe fn #cb_name(__enunion_env: napi::sys::napi_env) -> napi::Result<napi::sys::napi_value> {
+            let env = unsafe { ::napi::Env::from_raw(__enunion_env) };
+            let mut enum_object = env.create_object().unwrap();
+            #(
+                enum_object.set(#str_literals, #str_literals).unwrap();
+            )*
+             Ok(<::napi::JsObject as ::napi::NapiRaw>::raw(&enum_object))
+        }
+        #[doc(hidden)]
+        #[allow(non_snake_case)]
+        #[allow(clippy::all)]
+        #[cfg(not(test))]
+        #[::napi::bindgen_prelude::ctor]
+        fn #init_fn_ident() {
+            ::napi::bindgen_prelude::register_module_export(None, concat!(stringify!(#enum_ident), "\0"), #cb_name);
         }
     }.into()
 }
