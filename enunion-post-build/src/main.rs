@@ -10,13 +10,7 @@ fn main() {
         }
     };
 
-    let mut out_js = match std::fs::OpenOptions::new().append(true).open("index.js") {
-        Ok(out_js) => out_js,
-        Err(e) => {
-            eprintln!("Could not open file index.js {:?}", e);
-            std::process::exit(1);
-        }
-    };
+    let mut out_js = std::fs::OpenOptions::new().append(true).open("index.js").ok();
     let read_dir_iter = match std::fs::read_dir("enunion-generated-ts") {
         Ok(i) => i,
         Err(e) => {
@@ -28,20 +22,22 @@ fn main() {
     // Sort in alphabetical order so that output order can be controlled with prefixes.
     read_dir_iter.sort_unstable_by_key(|d| d.as_ref().ok().map(|d| d.path().display().to_string()));
     let mut ts = String::from("// -- BEGIN ENUNION GENERATED CODE --\n\n");
-    let mut js = String::from("// -- BEGIN ENUNION GENERATED CODE --\n\n");
+    let mut js = out_js.as_ref().map(|_| String::from("// -- BEGIN ENUNION GENERATED CODE --\n\n"));
     for f in read_dir_iter {
         let path = f.unwrap().path();
         let c = std::fs::read_to_string(&path).unwrap();
         if path.extension().and_then(|o| o.to_str()) == Some("ts") {
             writeln!(ts, "{}", c).unwrap();
-        } else {
-            writeln!(js, "{}", c).unwrap();
+        } else if let Some(js) = js.as_mut() {
+            writeln!(js, "{}", c).unwrap()
         }
     }
     writeln!(ts, "// -- END ENUNION GENERATED CODE --").unwrap();
     out_ts.write_all(ts.as_bytes()).unwrap();
-    writeln!(js, "// -- END ENUNION GENERATED CODE --").unwrap();
-    out_js.write_all(js.as_bytes()).unwrap();
+    if let Some(js) = js.as_mut() {
+        writeln!(js, "// -- END ENUNION GENERATED CODE --").unwrap();
+        out_js.as_mut().unwrap().write_all(js.as_bytes()).unwrap();
+    }
     std::fs::remove_dir_all("enunion-generated-ts").unwrap();
     println!("TypeScript files merged successfully!");
 }
