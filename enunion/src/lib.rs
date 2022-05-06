@@ -12,7 +12,8 @@ use syn::{
     parse::{Parse, ParseStream},
     punctuated::Punctuated,
     token::{Brace, Comma, Pub},
-    Expr, ExprLit, Field, Fields, Ident, ItemEnum, Lit, MetaNameValue, Variant, VisPublic,
+    Expr, ExprLit, Field, Fields, Ident, ItemEnum, Lit, MetaNameValue, PathArguments, PathSegment,
+    Variant, VisPublic,
 };
 
 /// This macro is applied to Rust enums. It generates code that will expose the enum to TypeScript as a discriminated union. It uses `napi` to accomplish this.
@@ -173,7 +174,7 @@ pub fn enunion(attr_input: TokenStream, item: TokenStream) -> TokenStream {
         .iter()
         .enumerate()
         .map(|(i, v)| {
-            VariantData::new(
+            VariantComputedData::new(
                 &e.ident,
                 &discriminant_enum_ident,
                 v,
@@ -183,14 +184,19 @@ pub fn enunion(attr_input: TokenStream, item: TokenStream) -> TokenStream {
             )
         })
         .collect::<Vec<_>>();
+    let struct_variants_iter = || {
+        variants.iter().filter_map(|v| match &v.data {
+            VariantData::Struct(data) => Some((v.variant, data)),
+            _ => None,
+        })
+    };
     let mod_ident = format_ident!(
         "__enunion_{}",
         heck::AsSnekCase(e.ident.to_string()).to_string()
     );
     let enum_ident = &e.ident;
-    let struct_idents = variants
-        .iter()
-        .map(|v| format_ident!("{}{}", enum_ident, v.variant.ident))
+    let struct_idents = struct_variants_iter()
+        .map(|(_v, v_data)| &v_data.struct_ident)
         .collect::<Vec<_>>();
     // This is the NAPI internal environment variable used to find the path to write TS definitions to. If it's set, then a new file is being generated.
     if var("TYPE_DEF_TMP_PATH").is_ok() {
@@ -214,16 +220,33 @@ pub fn enunion(attr_input: TokenStream, item: TokenStream) -> TokenStream {
             ts,
             "export type {} = {};",
             enum_ident,
-            struct_idents.iter().join(" | ")
+            struct_idents
+                .iter()
+                .map(|s| s.to_string())
+                .chain(
+                    variants
+                        .iter()
+                        .filter_map(|v| {
+                            match &v.data {
+                                VariantData::Transparent { types } => Some(types),
+                                _ => None,
+                            }
+                        })
+                        .map(|types| types
+                            .iter()
+                            .map(|ty| napi_derive_backend::ty_to_ts_type(ty, false, false).0)
+                            .join(" & "))
+                )
+                .join(" | ")
         )
         .expect("Failed to write to TS output file");
         if repr != DiscriminantRepr::None {
-            for v in &variants {
+            for (_v, v_data) in struct_variants_iter() {
                 writeln!(
                     ts,
                     "export const {ident}: {value};",
-                    ident = v.const_ident,
-                    value = v.const_value_ts
+                    ident = v_data.const_ident,
+                    value = v_data.const_value_ts
                 )
                 .expect("Failed to write to TS output file");
                 match repr {
@@ -231,8 +254,8 @@ pub fn enunion(attr_input: TokenStream, item: TokenStream) -> TokenStream {
                         writeln!(
                             js,
                             "module.exports.{ident} = module.exports.{value};",
-                            ident = v.const_ident,
-                            value = v.const_value_ts
+                            ident = v_data.const_ident,
+                            value = v_data.const_value_ts
                         )
                         .expect("Failed to write to TS output file");
                     }
@@ -240,8 +263,8 @@ pub fn enunion(attr_input: TokenStream, item: TokenStream) -> TokenStream {
                         writeln!(
                             js,
                             "module.exports.{ident} = {value};",
-                            ident = v.const_ident,
-                            value = v.const_value_ts
+                            ident = v_data.const_ident,
+                            value = v_data.const_value_ts
                         )
                         .expect("Failed to write to TS output file");
                     }
@@ -253,16 +276,18 @@ pub fn enunion(attr_input: TokenStream, item: TokenStream) -> TokenStream {
         let mut js_f = File::create(&js_path).expect("Failed to open JS output file");
         js_f.write_all(js.as_bytes()).unwrap();
     }
-    let const_idents = variants.iter().map(|v| &v.const_ident).collect::<Vec<_>>();
-    let const_values = variants.iter().map(|v| &v.const_value);
-    let ts_type_attrs = variants.iter().map(|v| {
-        let const_value = syn::LitStr::new(&v.const_value_ts.to_string(), Span::call_site());
+    let const_idents = struct_variants_iter()
+        .map(|(_v, v_data)| &v_data.const_ident)
+        .collect::<Vec<_>>();
+    let const_values = struct_variants_iter().map(|(_v, v_data)| &v_data.const_value);
+    let ts_type_attrs = struct_variants_iter().map(|(_v, v_data)| {
+        let const_value = syn::LitStr::new(&v_data.const_value_ts.to_string(), Span::call_site());
         quote! {
             #[napi(ts_type = #const_value)]
         }
     });
-    let struct_fields = variants.iter().map(|v| {
-        let mut pub_fields = v.fields.clone();
+    let struct_fields = struct_variants_iter().map(|(_v, v_data)| {
+        let mut pub_fields = v_data.fields.clone();
         for f in &mut pub_fields {
             f.vis = VisPublic {
                 pub_token: Pub {
@@ -279,28 +304,27 @@ pub fn enunion(attr_input: TokenStream, item: TokenStream) -> TokenStream {
         }
         pub_fields
     });
-    let variant_idents = variants
-        .iter()
-        .map(|v| &v.variant.ident)
+    let variant_idents = struct_variants_iter()
+        .map(|(v, _v_data)| &v.ident)
         .collect::<Vec<_>>();
-    let enum_field_idents = variants
-        .iter()
-        .map(|v| {
-            v.fields
+    let enum_field_idents = struct_variants_iter()
+        .map(|(_v, v_data)| {
+            v_data
+                .fields
                 .iter()
                 .map(|f| f.ident.as_ref().expect("infallible"))
                 .collect::<Vec<_>>()
         })
         .collect::<Vec<_>>();
-    let enum_field_tokens = variants
-        .iter()
-        .map(|v| &v.enum_field_tokens)
+    let enum_field_tokens = struct_variants_iter()
+        .map(|(_v, v_data)| &v_data.enum_field_tokens)
         .collect::<Vec<_>>();
-    let struct_field_tokens = variants.iter().map(|v| &v.struct_field_tokens);
-    let js_object_field_tokens = variants
-        .iter()
-        .map(|v| {
-            v.fields
+    let struct_field_tokens =
+        struct_variants_iter().map(|(_v, v_data)| &v_data.struct_field_tokens);
+    let js_object_field_tokens = struct_variants_iter()
+        .map(|(_v, v_data)| {
+            v_data
+                .fields
                 .iter()
                 .map(|f| {
                     format_ident!(
@@ -320,8 +344,8 @@ pub fn enunion(attr_input: TokenStream, item: TokenStream) -> TokenStream {
             }
         }
     };
-    let enum_pattern_tokens = variants.iter().map(|v| {
-        if v.fields.is_empty() {
+    let enum_pattern_tokens = struct_variants_iter().map(|(_v, v_data)| {
+        if v_data.fields.is_empty() {
             proc_macro2::TokenStream::new()
         } else {
             quote! { { .. } }
@@ -428,6 +452,134 @@ pub fn enunion(attr_input: TokenStream, item: TokenStream) -> TokenStream {
             }
         }
     } else {
+        let struct_variants = quote! {
+            #(
+                #[::napi_derive::napi(object)]
+                struct #struct_idents {
+                    #struct_fields
+                }
+
+                impl From<#struct_idents> for super::#enum_ident {
+                    fn from(s: #struct_idents) -> Self {
+                        Self::#variant_idents {
+                            #(#enum_field_idents: s.#enum_field_idents),*
+                        }
+                    }
+                }
+
+                impl TryFrom<super::#enum_ident> for #struct_idents {
+                    type Error = ContainedValueIsNotOfThatType;
+
+                    fn try_from(s: super::#enum_ident) -> ::std::result::Result<Self, Self::Error> {
+                        match s {
+                            super::#enum_ident::#variant_idents #enum_field_tokens => Ok(Self #enum_field_tokens),
+                            _ => Err(ContainedValueIsNotOfThatType),
+                        }
+                    }
+                }
+
+                impl TryFrom<&::napi::JsObject> for #struct_idents {
+                    type Error = ::napi::Error;
+
+                    fn try_from(o: &::napi::JsObject) -> ::std::result::Result<Self, Self::Error> {
+                        Ok(Self {
+                            #(#enum_field_idents: o.get(stringify!(#js_object_field_tokens))?.ok_or_else(|| ::napi::Error::from_reason(format!("conversion to {} failed, field {} is missing", stringify!(#struct_idents), stringify!(#js_object_field_tokens))))?,)*
+                        })
+                    }
+                }
+            )*
+        };
+        let from_attempts = variants.iter()
+            .map(|v| {
+                match &v.data {
+                    VariantData::Struct(s) => {
+                        let s_ident = &s.struct_ident;
+                        quote! {
+                            match <#s_ident as ::napi::bindgen_prelude::FromNapiValue>::from_napi_value(__enunion_env, __enunion_napi_val) {
+                                Ok(v) => {
+                                    return Ok(<#s_ident as Into<super::#enum_ident>>::into(v));
+                                },
+                                Err(e) => {
+                                    errs.push(e);
+                                },
+                            }
+                        }
+                    },
+                    VariantData::Transparent {types} => {
+                        let field_range = (0..types.len()).map(|i| format_ident!("_{}", i)).collect::<Vec<_>>();
+                        let v_ident = &v.variant.ident;
+                        let child_types = types.iter().cloned().map(compute_child_relative_type).collect::<Vec<_>>();
+                        quote! {
+                            match (
+                                #(
+                                    <#child_types as ::napi::bindgen_prelude::FromNapiValue>::from_napi_value(__enunion_env, __enunion_napi_val)
+                                ),*
+                            ) {
+                                ( #(Ok(#field_range)),* ) => {
+                                    return Ok(super::#enum_ident::#v_ident ( #(#field_range),* ));
+                                }
+                                ( #(#field_range @ _),* ) => {
+                                    #(
+                                        if let Err(e) = #field_range {
+                                            errs.push(e);
+                                        }
+                                    )*
+                                }
+                            }
+                        }
+                    },
+                }
+            })
+            .collect::<proc_macro2::TokenStream>();
+        let into_arms = variants.iter()
+            .map(|v| {
+                match &v.data {
+                    VariantData::Struct(s) => {
+                        let s_ident = &s.struct_ident;
+                        let v_ident = &v.variant.ident;
+                        let enum_pattern_tokens = if s.fields.is_empty() {
+                            proc_macro2::TokenStream::new()
+                        } else {
+                            quote! { { .. } }
+                        };
+                        quote! {
+                            super::#enum_ident::#v_ident #enum_pattern_tokens => <#s_ident as ::napi::bindgen_prelude::ToNapiValue>::to_napi_value(__enunion_env, val.try_into().unwrap()),
+                        }
+                    },
+                    VariantData::Transparent {types} => {
+                        let field_range = (0..types.len()).map(|i| format_ident!("_{}", i)).collect::<Vec<_>>();
+                        let v_ident = &v.variant.ident;
+                        let child_types = types.iter().cloned().map(compute_child_relative_type).collect::<Vec<_>>();
+                        let compute_value = if child_types.len() == 1 {
+                            let t = &child_types[0];
+                            quote! {
+                                <#t as ::napi::bindgen_prelude::ToNapiValue>::to_napi_value(__enunion_env, _0)
+                            }
+                        } else {
+                            // This usage only really makes sense with objects. Otherwise it's not
+                            // possible to merge these.
+                            quote! {
+                                {
+                                    let env = unsafe { ::napi::Env::from_raw(__enunion_env) };
+                                    let mut merged_object = env.create_object().unwrap();
+                                    #(
+                                        let sub_object = unsafe { <::napi::JsObject as ::napi::NapiValue>::from_raw(__enunion_env, <#child_types as ::napi::bindgen_prelude::ToNapiValue>::to_napi_value(__enunion_env, #field_range).unwrap()).expect("enunion doesn't support intersection types where the members aren't objects") };
+                                        let keys = ::napi::JsObject::keys(&sub_object).unwrap();
+                                        for key in keys {
+                                            merged_object.set_named_property::<::napi::JsUnknown>(&key, sub_object.get_named_property::<::napi::JsUnknown>(&key).unwrap()).unwrap();
+                                        }
+                                    )*
+                                    Ok(<::napi::JsObject as ::napi::NapiRaw>::raw(&merged_object))
+                                }
+                            }
+                        };
+                        quote! {
+                            super::#enum_ident::#v_ident(#(#field_range),*) => #compute_value,
+                        }
+                    },
+                }
+            })
+            .collect::<proc_macro2::TokenStream>();
         quote! {
             #e
 
@@ -437,85 +589,78 @@ pub fn enunion(attr_input: TokenStream, item: TokenStream) -> TokenStream {
 
                 impl ::napi::bindgen_prelude::FromNapiValue for super::#enum_ident {
                     unsafe fn from_napi_value(__enunion_env: ::napi::sys::napi_env, __enunion_napi_val: ::napi::sys::napi_value) -> ::napi::bindgen_prelude::Result<Self> {
-                        let o = <::napi::JsObject as ::napi::bindgen_prelude::FromNapiValue>::from_napi_value(__enunion_env, __enunion_napi_val)?;
                         let mut errs = Vec::new();
-                        #(
-                            match #struct_idents::try_from(&o) {
-                                Ok(v) => {
-                                    return Ok(<#struct_idents as Into<super::#enum_ident>>::into(v));
-                                },
-                                Err(e) => {
-                                    errs.push(e);
-                                },
-                            }
-                        )*
+                        #from_attempts
                         Err(::napi::Error::from_reason(format!("JS object provided was not a valid {}, no variants deserialized correctly. Errors: {:?}", stringify!(#enum_ident), errs)))
                     }
                 }
 
                 impl ::napi::bindgen_prelude::ToNapiValue for super::#enum_ident {
                     unsafe fn to_napi_value(__enunion_env: ::napi::sys::napi_env, val: Self) -> ::napi::bindgen_prelude::Result<::napi::sys::napi_value> {
-                        match &val {
-                            #(super::#enum_ident::#variant_idents #enum_pattern_tokens => <#struct_idents as ::napi::bindgen_prelude::ToNapiValue>::to_napi_value(__enunion_env, val.try_into().unwrap()),)*
+                        match val {
+                            #into_arms
                         }
                     }
                 }
 
-                #(
-                    #[::napi_derive::napi(object)]
-                    struct #struct_idents {
-                        #struct_fields
-                    }
-
-                    impl From<#struct_idents> for super::#enum_ident {
-                        fn from(s: #struct_idents) -> Self {
-                            Self::#variant_idents {
-                                #(#enum_field_idents: s.#enum_field_idents),*
-                            }
-                        }
-                    }
-
-                    impl TryFrom<super::#enum_ident> for #struct_idents {
-                        type Error = ContainedValueIsNotOfThatType;
-
-                        fn try_from(s: super::#enum_ident) -> ::std::result::Result<Self, Self::Error> {
-                            match s {
-                                super::#enum_ident::#variant_idents #enum_field_tokens => Ok(Self #enum_field_tokens),
-                                _ => Err(ContainedValueIsNotOfThatType),
-                            }
-                        }
-                    }
-
-                    impl TryFrom<&::napi::JsObject> for #struct_idents {
-                        type Error = ::napi::Error;
-
-                        fn try_from(o: &::napi::JsObject) -> ::std::result::Result<Self, Self::Error> {
-                            Ok(Self {
-                                #(#enum_field_idents: o.get(stringify!(#js_object_field_tokens))?.ok_or_else(|| ::napi::Error::from_reason(format!("conversion to {} failed, field {} is missing", stringify!(#struct_idents), stringify!(#js_object_field_tokens))))?,)*
-                            })
-                        }
-                    }
-                )*
+                #struct_variants
 
                 #[derive(Debug, Copy, Clone)]
                 pub struct ContainedValueIsNotOfThatType;
             }
         }
-    }
-    .into()
+    }.into()
 }
 
-struct VariantData<'a> {
+fn compute_child_relative_type(mut ty: syn::Type) -> syn::Type {
+    match &mut ty {
+        syn::Type::Path(syn::TypePath { path, .. }) => {
+            if path.leading_colon.is_none() {
+                let compute_super = || PathSegment {
+                    ident: Ident::new("super", Span::call_site()),
+                    arguments: PathArguments::None,
+                };
+                match path.segments[0].ident.to_string().as_str() {
+                    "self" => {
+                        path.segments[0] = compute_super();
+                    }
+                    "crate" | "Self" => {
+                        // Do nothing, this path is already absolute.
+                    }
+                    _ => {
+                        path.segments.insert(0, compute_super());
+                    }
+                }
+            }
+        }
+        _ => {
+            // Do nothing, this is already absolute.
+        }
+    }
+    ty
+}
+
+enum VariantData {
+    Struct(VariantStructData),
+    Transparent { types: Vec<syn::Type> },
+}
+
+struct VariantComputedData<'a> {
     variant: &'a Variant,
+    data: VariantData,
+}
+
+struct VariantStructData {
     fields: Punctuated<Field, Comma>,
     const_ident: Ident,
+    struct_ident: Ident,
     const_value: proc_macro2::TokenStream,
     const_value_ts: String,
     enum_field_tokens: proc_macro2::TokenStream,
     struct_field_tokens: proc_macro2::TokenStream,
 }
 
-impl<'a> VariantData<'a> {
+impl<'a> VariantComputedData<'a> {
     pub fn new(
         enum_ident: &Ident,
         discriminant_enum_ident: &Option<proc_macro2::TokenStream>,
@@ -530,7 +675,17 @@ impl<'a> VariantData<'a> {
         let fields = match &variant.fields {
             Fields::Named(named) => named.named.clone(),
             Fields::Unit => Punctuated::new(),
-            Fields::Unnamed(_) => abort_call_site!("enunion is not compatible with tuple enum variants such as {}::{}, try using named fields instead.", enum_ident, variant.ident)
+            Fields::Unnamed(unnamed) => {
+                if repr != DiscriminantRepr::None {
+                    abort_call_site!("Using a discriminant is not compatible with tuple enum variants such as {}::{}, try using named fields instead. Alternatively, use \"none\" discriminant_repr.", enum_ident, variant.ident)
+                }
+                return Self {
+                    variant,
+                    data: VariantData::Transparent {
+                        types: unnamed.unnamed.iter().map(|f| f.ty.clone()).collect(),
+                    },
+                };
+            }
         };
         let const_ident = format_ident!(
             "{}_TYPE_{}",
@@ -585,14 +740,19 @@ impl<'a> VariantData<'a> {
             .surround(&mut ret, |ret| ret.extend(t_clone));
             **t = ret;
         }
-        Self {
-            variant,
+        let struct_ident = format_ident!("{}{}", enum_ident, variant.ident);
+        let data = VariantStructData {
             fields,
+            struct_ident,
             const_ident,
             const_value,
             const_value_ts,
             enum_field_tokens,
             struct_field_tokens,
+        };
+        Self {
+            variant,
+            data: VariantData::Struct(data),
         }
     }
 }

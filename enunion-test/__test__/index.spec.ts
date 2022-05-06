@@ -1,17 +1,20 @@
 import {
+  DEFAULT_FOO_TYPE_BAR,
+  DEFAULT_FOO_TYPE_ZOODLE,
+  FOO_ENUM_STR_TYPE_BAR,
+  FOO_ENUM_TYPE_BAR,
+  FOO_STRING_TYPE_BAR,
+  FOO_TYPE_BAZ, FooNew, FooNoDiscriminant, FooStringNew,
+  StringTest,
   takeFoo,
-  takeFooNoDiscriminant,
+  takeFooDefault,
   takeFooEnum,
   takeFooEnumStr,
-  takeFooDefault,
+  takeFooNoDiscriminant,
+  takeFooNoDiscriminantTransparentManyStructs,
+  takeFooNoDiscriminantTransparentOneField,
   takeFooString,
   takeStringTest,
-  FOO_TYPE_BAZ,
-  FOO_STRING_TYPE_BAR,
-  DEFAULT_FOO_TYPE_BAR,
-  FOO_ENUM_TYPE_BAR,
-  DEFAULT_FOO_TYPE_ZOODLE,
-  StringTest, FOO_ENUM_STR_TYPE_BAR,
 } from "../index";
 
 it("calls takeStringTest", () => {
@@ -39,8 +42,17 @@ it("calls takeFooEnumStr", () => {
 it("calls takeFooNoDiscriminant", () => {
   let r = takeFooNoDiscriminant({ a: 1, b: 2 });
   expect(r["d"]).toBe(1);
-  expect(r.b).toBe(2);
+  expect(r["b"]).toBe(2);
   expect(Object.keys(r).length).toBe(2);
+});
+
+it("calls takeFooNoDiscriminantTransparentOneField", () => {
+  expect(takeFooNoDiscriminantTransparentOneField(StringTest.Bar)).toBe(StringTest.Baz);
+});
+
+it("calls takeFooNoDiscriminantTransparentManyStructs", () => {
+  let input: FooNoDiscriminant = { newType: 0, fooStringType: "FOO_STRING_TYPE_BAR"};
+  expect(takeFooNoDiscriminantTransparentManyStructs(input)).toEqual({ newType: 0, fooStringType: "FOO_STRING_TYPE_BAR"});
 });
 
 it("calls takeFooString", () => {

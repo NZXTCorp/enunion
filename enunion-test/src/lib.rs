@@ -33,6 +33,8 @@ pub enum FooEnumStr {
 pub enum FooNoDiscriminant {
   Bar { a: i32, b: i32 },
   Baz { d: i32, b: u32 },
+  TransparentOneField(StringTest),
+  TransparentManyStructs(FooNew, FooString),
 }
 
 #[enunion::enunion(discriminant_repr = "i64", discriminant_field_name = "new_type")]
@@ -84,6 +86,19 @@ pub fn take_string_test(t: StringTest) -> StringTest {
 pub fn take_foo_no_discriminant(f: FooNoDiscriminant) -> FooNoDiscriminant {
   assert!(matches!(f, FooNoDiscriminant::Bar { a: 1, b: 2 }));
   FooNoDiscriminant::Baz { d: 1, b: 2 }
+}
+
+#[napi]
+pub fn take_foo_no_discriminant_transparent_one_field(f: FooNoDiscriminant) -> FooNoDiscriminant {
+  assert!(matches!(f, FooNoDiscriminant::TransparentOneField(StringTest::Bar)));
+  FooNoDiscriminant::TransparentOneField(StringTest::Baz)
+}
+
+
+#[napi]
+pub fn take_foo_no_discriminant_transparent_many_structs(f: FooNoDiscriminant) -> FooNoDiscriminant {
+  assert!(matches!(f, FooNoDiscriminant::TransparentManyStructs(FooNew::Bar, FooString::Bar)));
+  FooNoDiscriminant::TransparentManyStructs(FooNew::Bar, FooString::Bar)
 }
 
 #[napi]
