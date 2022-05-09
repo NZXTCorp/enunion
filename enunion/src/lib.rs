@@ -189,6 +189,18 @@ pub fn enunion(attr_input: TokenStream, item: TokenStream) -> TokenStream {
             _ => None,
         })
     };
+    if repr != DiscriminantRepr::None {
+        // Check for duplicate discriminant values
+        let mut sorted_idents = struct_variants_iter()
+            .map(|(v, v_data)| (&v.ident, &v_data.const_value))
+            .collect::<Vec<_>>();
+        sorted_idents.sort_unstable_by_key(|(_variant_ident, value)| value.to_string());
+        for w in sorted_idents.windows(2) {
+            if w[0].1.to_string() == w[1].1.to_string() {
+                abort_call_site!("`{}` contains duplicate discriminants, `{}` and `{}` would collide. Change one of the discriminant values to an unused value.", e.ident.to_string(), w[0].0.to_string(), w[1].0.to_string());
+            }
+        }
+    }
     let mod_ident = format_ident!(
         "__enunion_{}",
         heck::AsSnekCase(e.ident.to_string()).to_string()
@@ -350,6 +362,14 @@ pub fn enunion(attr_input: TokenStream, item: TokenStream) -> TokenStream {
             quote! { { .. } }
         }
     });
+    let discriminant_enum_idents = struct_variants_iter().map(|(v, v_data)| {
+        v_data
+            .discriminant_value
+            .as_ref()
+            .map(|v| Ident::new(v, Span::call_site()))
+            .unwrap_or(v.ident.clone())
+    });
+
     let discriminant_enum = discriminant_enum_ident.map(|i| {
         if DiscriminantRepr::EnumStr == repr {
             quote! {
@@ -357,7 +377,7 @@ pub fn enunion(attr_input: TokenStream, item: TokenStream) -> TokenStream {
                 #[derive(Debug, Eq, PartialEq)]
                 pub enum #i {
                     #(
-                        #variant_idents
+                        #discriminant_enum_idents
                     ),*
                 }
             }
@@ -367,15 +387,28 @@ pub fn enunion(attr_input: TokenStream, item: TokenStream) -> TokenStream {
                 #[derive(Debug, Eq, PartialEq)]
                 pub enum #i {
                     #(
-                        #variant_idents
+                        #discriminant_enum_idents
                     ),*
                 }
             }
         }
     });
+    let mut e_altered = e.clone();
+    // remove the `enunion` attributes from the resulting enum, they've been parsed.
+    //remove_attrs(&mut e_altered.attrs);
+    for v in &mut e_altered.variants {
+        v.attrs.retain(|a| {
+            a.path
+                .segments
+                .last()
+                .map(|i| i.ident.to_string())
+                .as_deref()
+                != Some("enunion")
+        });
+    }
     if repr != DiscriminantRepr::None {
         quote! {
-            #e
+            #e_altered
 
             #[doc(hidden)]
             mod #mod_ident {
@@ -591,7 +624,7 @@ pub fn enunion(attr_input: TokenStream, item: TokenStream) -> TokenStream {
             })
             .collect::<proc_macro2::TokenStream>();
         quote! {
-            #e
+            #e_altered
 
             #[doc(hidden)]
             mod #mod_ident {
@@ -641,6 +674,7 @@ struct VariantStructData {
     const_value_ts: String,
     enum_field_tokens: proc_macro2::TokenStream,
     struct_field_tokens: proc_macro2::TokenStream,
+    discriminant_value: Option<String>,
 }
 
 impl<'a> VariantComputedData<'a> {
@@ -675,23 +709,58 @@ impl<'a> VariantComputedData<'a> {
             heck::AsShoutySnekCase(enum_ident.to_string()).to_string(),
             heck::AsShoutySnekCase(variant.ident.to_string()).to_string()
         );
+        let variant_args = variant
+            .attrs
+            .iter()
+            .find(|a| a
+                .path
+                .get_ident()
+                .map(ToString::to_string)
+                .as_deref() == Some("enunion")
+            )
+            .map(|a| a.parse_args::<Args>().unwrap_or_else(|e| abort_call_site!("Failed to parse enunion variant `{}` attribute input, please use field = \"value\" in a comma separated list. Check the documentation for examples. Error: {:?}", variant.ident, e)));
+        let mut discriminant_value = None;
+        if let Some(variant_args) = variant_args {
+            for arg in variant_args.items {
+                match arg.path.get_ident().map(|i| i.to_string()).as_deref() {
+                    Some("discriminant_value") => match arg.lit {
+                        Lit::Str(s) => {
+                            discriminant_value = Some(s.value());
+                        }
+                        Lit::Int(i) => {
+                            discriminant_value = Some(i.base10_digits().to_string());
+                        }
+                        _ => {
+                            abort_call_site!("literal type provided for {} is not supported, please use a string or an integer.", variant.ident);
+                        }
+                    }
+                    _ => abort_call_site!("{} was not a recognized enunion argument, please use `discriminant_value`.", arg.path.to_token_stream())
+                }
+            }
+        }
         let (const_value, const_value_ts) = match repr {
             DiscriminantRepr::I64 => {
-                let i: i64 = variant_index.try_into().expect("too many variants!");
+                let i: i64 = discriminant_value.as_ref().map(|s| s.parse().unwrap_or_else(|e| abort_call_site!("discriminant_repr is i64, but discriminant_value is not an i64, this is not supported. {:?}", e))).unwrap_or_else(|| variant_index.try_into().expect("too many variants!"));
                 (quote! { #i }, i.to_string())
             }
             DiscriminantRepr::Enum | DiscriminantRepr::EnumStr => {
-                let v = &variant.ident;
+                let v = discriminant_value
+                    .as_ref()
+                    .map(|s| Ident::new(&s, Span::call_site()))
+                    .unwrap_or_else(|| variant.ident.clone());
                 let discriminant_enum_ident = discriminant_enum_ident.as_ref().unwrap();
                 (
                     quote! { #discriminant_enum_ident::#v },
                     format!("{}.{}", discriminant_enum_ident, v),
                 )
             }
-            DiscriminantRepr::String => (
-                quote! { stringify!(#const_ident) },
-                format!("\"{}\"", const_ident),
-            ),
+            DiscriminantRepr::String => {
+                let value = discriminant_value
+                    .as_ref()
+                    .map(|s| Ident::new(&s, Span::call_site()))
+                    .unwrap_or_else(|| const_ident.clone());
+                (quote! { stringify!(#value) }, format!("\"{}\"", value))
+            }
             DiscriminantRepr::None => (
                 quote! {
                     compile_error!("const_value for DiscriminantRepr::None was used, this is a bug in enunion!");
@@ -724,18 +793,18 @@ impl<'a> VariantComputedData<'a> {
             **t = ret;
         }
         let struct_ident = format_ident!("{}{}", enum_ident, variant.ident);
-        let data = VariantStructData {
-            fields,
-            struct_ident,
-            const_ident,
-            const_value,
-            const_value_ts,
-            enum_field_tokens,
-            struct_field_tokens,
-        };
         Self {
             variant,
-            data: VariantData::Struct(data),
+            data: VariantData::Struct(VariantStructData {
+                fields,
+                struct_ident,
+                const_ident,
+                const_value,
+                const_value_ts,
+                enum_field_tokens,
+                struct_field_tokens,
+                discriminant_value,
+            }),
         }
     }
 }

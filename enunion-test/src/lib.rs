@@ -3,6 +3,7 @@ use napi_derive::napi;
 #[enunion::enunion(discriminant_repr = "i64")]
 pub enum Foo {
   Bar,
+  #[enunion(discriminant_value = "4")]
   Baz {
     a: i32,
     b: u32,
@@ -14,18 +15,21 @@ pub enum Foo {
 #[enunion::enunion(discriminant_repr = "str")]
 pub enum FooString {
   Bar,
+  #[enunion(discriminant_value = "baaz")]
   Baz { a: i32, b: u32, c: String },
 }
 
 #[enunion::enunion(discriminant_repr = "enum")]
 pub enum FooEnum {
   Bar,
+  #[enunion(discriminant_value = "Baaz")]
   Baz { a: i32, b: u32, c: String },
 }
 
 #[enunion::enunion(discriminant_repr = "enum_str")]
 pub enum FooEnumStr {
   Bar,
+  #[enunion(discriminant_value = "Baaz")]
   Baz { a: i32, b: u32, c: String },
 }
 
