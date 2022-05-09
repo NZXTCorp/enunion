@@ -367,7 +367,7 @@ pub fn enunion(attr_input: TokenStream, item: TokenStream) -> TokenStream {
             .discriminant_value
             .as_ref()
             .map(|v| Ident::new(v, Span::call_site()))
-            .unwrap_or(v.ident.clone())
+            .unwrap_or_else(|| v.ident.clone())
     });
 
     let discriminant_enum = discriminant_enum_ident.map(|i| {
@@ -656,6 +656,7 @@ pub fn enunion(attr_input: TokenStream, item: TokenStream) -> TokenStream {
     }.into()
 }
 
+#[allow(clippy::large_enum_variant)] // Large variant is most common
 enum VariantData {
     Struct(VariantStructData),
     Transparent { types: Vec<syn::Type> },
@@ -746,7 +747,7 @@ impl<'a> VariantComputedData<'a> {
             DiscriminantRepr::Enum | DiscriminantRepr::EnumStr => {
                 let v = discriminant_value
                     .as_ref()
-                    .map(|s| Ident::new(&s, Span::call_site()))
+                    .map(|s| Ident::new(s, Span::call_site()))
                     .unwrap_or_else(|| variant.ident.clone());
                 let discriminant_enum_ident = discriminant_enum_ident.as_ref().unwrap();
                 (
@@ -757,7 +758,7 @@ impl<'a> VariantComputedData<'a> {
             DiscriminantRepr::String => {
                 let value = discriminant_value
                     .as_ref()
-                    .map(|s| Ident::new(&s, Span::call_site()))
+                    .map(|s| Ident::new(s, Span::call_site()))
                     .unwrap_or_else(|| const_ident.clone());
                 (quote! { stringify!(#value) }, format!("\"{}\"", value))
             }
