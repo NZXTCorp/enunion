@@ -90,14 +90,21 @@ pub fn take_foo_no_discriminant(f: FooNoDiscriminant) -> FooNoDiscriminant {
 
 #[napi]
 pub fn take_foo_no_discriminant_transparent_one_field(f: FooNoDiscriminant) -> FooNoDiscriminant {
-  assert!(matches!(f, FooNoDiscriminant::TransparentOneField(StringTest::Bar)));
+  assert!(matches!(
+    f,
+    FooNoDiscriminant::TransparentOneField(StringTest::Bar)
+  ));
   FooNoDiscriminant::TransparentOneField(StringTest::Baz)
 }
 
-
 #[napi]
-pub fn take_foo_no_discriminant_transparent_many_structs(f: FooNoDiscriminant) -> FooNoDiscriminant {
-  assert!(matches!(f, FooNoDiscriminant::TransparentManyStructs(FooNew::Bar, FooString::Bar)));
+pub fn take_foo_no_discriminant_transparent_many_structs(
+  f: FooNoDiscriminant,
+) -> FooNoDiscriminant {
+  assert!(matches!(
+    f,
+    FooNoDiscriminant::TransparentManyStructs(FooNew::Bar, FooString::Bar)
+  ));
   FooNoDiscriminant::TransparentManyStructs(FooNew::Bar, FooString::Bar)
 }
 

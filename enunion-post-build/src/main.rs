@@ -10,7 +10,10 @@ fn main() {
         }
     };
 
-    let mut out_js = std::fs::OpenOptions::new().append(true).open("index.js").ok();
+    let mut out_js = std::fs::OpenOptions::new()
+        .append(true)
+        .open("index.js")
+        .ok();
     let read_dir_iter = match std::fs::read_dir("enunion-generated-ts") {
         Ok(i) => i,
         Err(e) => {
@@ -22,7 +25,9 @@ fn main() {
     // Sort in alphabetical order so that output order can be controlled with prefixes.
     read_dir_iter.sort_unstable_by_key(|d| d.as_ref().ok().map(|d| d.path().display().to_string()));
     let mut ts = String::from("// -- BEGIN ENUNION GENERATED CODE --\n\n");
-    let mut js = out_js.as_ref().map(|_| String::from("// -- BEGIN ENUNION GENERATED CODE --\n\n"));
+    let mut js = out_js
+        .as_ref()
+        .map(|_| String::from("// -- BEGIN ENUNION GENERATED CODE --\n\n"));
     for f in read_dir_iter {
         let path = f.unwrap().path();
         let c = std::fs::read_to_string(&path).unwrap();
