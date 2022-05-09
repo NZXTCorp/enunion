@@ -12,8 +12,7 @@ use syn::{
     parse::{Parse, ParseStream},
     punctuated::Punctuated,
     token::{Brace, Comma, Pub},
-    Expr, ExprLit, Field, Fields, Ident, ItemEnum, Lit, MetaNameValue, PathArguments, PathSegment,
-    Variant, VisPublic,
+    Expr, ExprLit, Field, Fields, Ident, ItemEnum, Lit, MetaNameValue, Variant, VisPublic,
 };
 
 /// This macro is applied to Rust enums. It generates code that will expose the enum to TypeScript as a discriminated union. It uses `napi` to accomplish this.
@@ -521,11 +520,10 @@ pub fn enunion(attr_input: TokenStream, item: TokenStream) -> TokenStream {
                     VariantData::Transparent {types} => {
                         let field_range = (0..types.len()).map(|i| format_ident!("_{}", i)).collect::<Vec<_>>();
                         let v_ident = &v.variant.ident;
-                        let child_types = types.iter().cloned().map(compute_child_relative_type).collect::<Vec<_>>();
                         quote! {
                             match (
                                 #(
-                                    <#child_types as ::napi::bindgen_prelude::FromNapiValue>::from_napi_value(__enunion_env, __enunion_napi_val)
+                                    <#types as ::napi::bindgen_prelude::FromNapiValue>::from_napi_value(__enunion_env, __enunion_napi_val)
                                 ),*
                             ) {
                                 ( #(Ok(#field_range)),* ) => {
@@ -562,9 +560,8 @@ pub fn enunion(attr_input: TokenStream, item: TokenStream) -> TokenStream {
                     VariantData::Transparent {types} => {
                         let field_range = (0..types.len()).map(|i| format_ident!("_{}", i)).collect::<Vec<_>>();
                         let v_ident = &v.variant.ident;
-                        let child_types = types.iter().cloned().map(compute_child_relative_type).collect::<Vec<_>>();
-                        let compute_value = if child_types.len() == 1 {
-                            let t = &child_types[0];
+                        let compute_value = if types.len() == 1 {
+                            let t = &types[0];
                             quote! {
                                 <#t as ::napi::bindgen_prelude::ToNapiValue>::to_napi_value(__enunion_env, _0)
                             }
@@ -576,7 +573,7 @@ pub fn enunion(attr_input: TokenStream, item: TokenStream) -> TokenStream {
                                     let env = unsafe { ::napi::Env::from_raw(__enunion_env) };
                                     let mut merged_object = env.create_object().unwrap();
                                     #(
-                                        let sub_object = unsafe { <::napi::JsObject as ::napi::NapiValue>::from_raw(__enunion_env, <#child_types as ::napi::bindgen_prelude::ToNapiValue>::to_napi_value(__enunion_env, #field_range).unwrap()).expect("enunion doesn't support intersection types where the members aren't objects") };
+                                        let sub_object = unsafe { <::napi::JsObject as ::napi::NapiValue>::from_raw(__enunion_env, <#types as ::napi::bindgen_prelude::ToNapiValue>::to_napi_value(__enunion_env, #field_range).unwrap()).expect("enunion doesn't support intersection types where the members aren't objects") };
                                         let keys = ::napi::JsObject::keys(&sub_object).unwrap();
                                         for key in keys {
                                             merged_object.set_named_property::<::napi::JsUnknown>(&key, sub_object.get_named_property::<::napi::JsUnknown>(&key).unwrap()).unwrap();
@@ -599,6 +596,7 @@ pub fn enunion(attr_input: TokenStream, item: TokenStream) -> TokenStream {
             #[doc(hidden)]
             mod #mod_ident {
                 use ::napi::bindgen_prelude::*;
+                use super::*;
 
                 impl ::napi::bindgen_prelude::FromNapiValue for super::#enum_ident {
                     unsafe fn from_napi_value(__enunion_env: ::napi::sys::napi_env, __enunion_napi_val: ::napi::sys::napi_value) -> ::napi::bindgen_prelude::Result<Self> {
@@ -623,34 +621,6 @@ pub fn enunion(attr_input: TokenStream, item: TokenStream) -> TokenStream {
             }
         }
     }.into()
-}
-
-fn compute_child_relative_type(mut ty: syn::Type) -> syn::Type {
-    match &mut ty {
-        syn::Type::Path(syn::TypePath { path, .. }) => {
-            if path.leading_colon.is_none() {
-                let compute_super = || PathSegment {
-                    ident: Ident::new("super", Span::call_site()),
-                    arguments: PathArguments::None,
-                };
-                match path.segments[0].ident.to_string().as_str() {
-                    "self" => {
-                        path.segments[0] = compute_super();
-                    }
-                    "crate" | "Self" => {
-                        // Do nothing, this path is already absolute.
-                    }
-                    _ => {
-                        path.segments.insert(0, compute_super());
-                    }
-                }
-            }
-        }
-        _ => {
-            // Do nothing, this is already absolute.
-        }
-    }
-    ty
 }
 
 enum VariantData {
