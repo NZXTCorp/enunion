@@ -15,6 +15,8 @@ use syn::{
     Expr, ExprLit, Field, Fields, Ident, ItemEnum, Lit, MetaNameValue, Variant, VisPublic,
 };
 
+const SUPPORTED_REPR_TYPES: &'static str = "\"i64\", \"enum\", \"enum_str\", \"none\", \"str\", or \"bool\"";
+
 /// This macro is applied to Rust enums. It generates code that will expose the enum to TypeScript as a discriminated union. It uses `napi` to accomplish this.
 /// Enunion also handles automatically converting between the two representations, in Rust you can define `#[napi]` methods that accept the enum as an argument, or return an instance of that enum.
 /// The TypeScript will be free to handle it as a discriminated union, the Rust can handle it as an enum, and enunion will take care of translating at the boundary.
@@ -48,6 +50,7 @@ use syn::{
 /// - "enum_str" - Generates a companion string enum and uses variants from it to discriminate the union.
 /// - "i64" - Uses non-negative whole numbers to discriminate the union variants.
 /// - "str" - Uses strings to discriminate the union variants
+/// - "bool" - Only two variants are permitted, the first will be false, the second will be true.
 /// - "none" - No discriminant is used. The type is inferred from the fields present. If this is used
 /// then no two variants should share a structure. Variants will be tried top to bottom, and the
 /// first one that succeeds will be returned.
@@ -104,6 +107,9 @@ pub fn enunion(attr_input: TokenStream, item: TokenStream) -> TokenStream {
                         "i64" => {
                             repr = Some(DiscriminantRepr::I64);
                         }
+                        "bool" => {
+                            repr = Some(DiscriminantRepr::Bool);
+                        }
                         "str" => {
                             repr = Some(DiscriminantRepr::String);
                         }
@@ -117,11 +123,11 @@ pub fn enunion(attr_input: TokenStream, item: TokenStream) -> TokenStream {
                             repr = Some(DiscriminantRepr::None);
                         }
                         other => {
-                            abort_call_site!("{} is not a recognized representation, please use \"i64\", \"enum\", \"enum_str\", \"none\", or \"str\"", other)
+                            abort_call_site!("{} is not a recognized representation, please use {}", other, SUPPORTED_REPR_TYPES)
                         }
                     }
                 }
-                _ => abort_call_site!("only string literals are supported for the discriminant_repr, please provide \"i64\", \"enum\", \"enum_str\", \"none\", or \"str\"")
+                _ => abort_call_site!("only string literals are supported for the discriminant_repr, please provide {}", SUPPORTED_REPR_TYPES)
             },
             Some("discriminant_field_name") => 
                 match lit {
@@ -155,6 +161,7 @@ pub fn enunion(attr_input: TokenStream, item: TokenStream) -> TokenStream {
     let mut discriminant_enum_ident = None;
     let (discriminant_type, discriminant_type_dynamic) = match repr {
         DiscriminantRepr::I64 => (quote!(i64), quote!(i64)),
+        DiscriminantRepr::Bool => (quote!(bool), quote!(bool)),
         DiscriminantRepr::String => (quote!(&'static str), quote!(String)),
         DiscriminantRepr::Enum | DiscriminantRepr::EnumStr => {
             let i = format_ident!("{}Discriminant", e.ident.to_string()).into_token_stream();
@@ -347,7 +354,10 @@ pub fn enunion(attr_input: TokenStream, item: TokenStream) -> TokenStream {
         })
         .collect::<Vec<_>>();
     let ty_compare_expr = match repr {
-        DiscriminantRepr::I64 | DiscriminantRepr::Enum | DiscriminantRepr::EnumStr => quote! { ty },
+        DiscriminantRepr::I64
+        | DiscriminantRepr::Enum
+        | DiscriminantRepr::EnumStr
+        | DiscriminantRepr::Bool => quote! { ty },
         DiscriminantRepr::String => quote! { ty.as_deref() },
         DiscriminantRepr::None => {
             quote! {
@@ -741,8 +751,26 @@ impl<'a> VariantComputedData<'a> {
         }
         let (const_value, const_value_ts) = match repr {
             DiscriminantRepr::I64 => {
-                let i: i64 = discriminant_value.as_ref().map(|s| s.parse().unwrap_or_else(|e| abort_call_site!("discriminant_repr is i64, but discriminant_value is not an i64, this is not supported. {:?}", e))).unwrap_or_else(|| variant_index.try_into().expect("too many variants!"));
+                let i: i64 = discriminant_value
+                    .as_deref()
+                    .map(|s| s
+                        .parse()
+                        .unwrap_or_else(|e| abort_call_site!("discriminant_repr is i64, but discriminant_value is not an i64, this is not supported. {:?}", e)))
+                    .unwrap_or_else(|| variant_index.try_into().expect("too many variants!"));
                 (quote! { #i }, i.to_string())
+            }
+            DiscriminantRepr::Bool => {
+                let b: bool = discriminant_value
+                    .as_deref()
+                    .map(|s| s
+                        .parse()
+                        .unwrap_or_else(|e| abort_call_site!("discriminant_repr is bool, but discriminant_value is not a bool, this is not supported. {:?}", e)))
+                    .unwrap_or_else(|| match variant_index {
+                        0 => Some(false),
+                        1 => Some(true),
+                        _ => None,
+                    }.unwrap_or_else(|| abort_call_site!("only two variants are supported with discriminant_repr = \"bool\"")));
+                (quote! { #b }, b.to_string())
             }
             DiscriminantRepr::Enum | DiscriminantRepr::EnumStr => {
                 let v = discriminant_value
@@ -813,6 +841,7 @@ impl<'a> VariantComputedData<'a> {
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 enum DiscriminantRepr {
     I64,
+    Bool,
     String,
     Enum,
     EnumStr,

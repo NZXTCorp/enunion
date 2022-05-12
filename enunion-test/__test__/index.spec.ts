@@ -1,12 +1,14 @@
 import {
   DEFAULT_FOO_TYPE_BAR,
   DEFAULT_FOO_TYPE_ZOODLE,
+  FOO_BOOL_TYPE_BAR,
   FOO_ENUM_STR_TYPE_BAR,
   FOO_ENUM_TYPE_BAR,
   FOO_STRING_TYPE_BAR,
   FOO_TYPE_BAZ, FooNew, FooNoDiscriminant, FooStringNew,
   StringTest,
   takeFoo,
+  takeFooBool,
   takeFooDefault,
   takeFooEnum,
   takeFooEnumStr,
@@ -30,6 +32,12 @@ it("calls takeFooDefault", () => {
 it("calls takeFooEnum", () => {
   expect(takeFooEnum({ fooEnumType: FOO_ENUM_TYPE_BAR }).fooEnumType).toBe(
       FOO_ENUM_TYPE_BAR
+  );
+});
+
+it("calls takeFooBool", () => {
+  expect(takeFooBool({ fooBoolType: FOO_BOOL_TYPE_BAR }).fooBoolType).toBe(
+      FOO_BOOL_TYPE_BAR
   );
 });
 

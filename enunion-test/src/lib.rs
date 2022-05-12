@@ -12,6 +12,19 @@ pub enum Foo {
   },
 }
 
+#[enunion::enunion(discriminant_repr = "bool")]
+pub enum FooBool {
+  #[enunion(discriminant_value = "true")]
+  Bar,
+  #[enunion(discriminant_value = "false")]
+  Baz {
+    a: i32,
+    b: u32,
+    c: String,
+    my_multi_word_field: i32,
+  },
+}
+
 #[enunion::enunion(discriminant_repr = "str")]
 pub enum FooString {
   Bar,
@@ -116,6 +129,12 @@ pub fn take_foo_no_discriminant_transparent_many_structs(
 pub fn take_foo_enum(f: FooEnum) -> FooEnum {
   assert!(matches!(f, FooEnum::Bar));
   FooEnum::Bar
+}
+
+#[napi]
+pub fn take_foo_bool(f: FooBool) -> FooBool {
+  assert!(matches!(f, FooBool::Bar));
+  FooBool::Bar
 }
 
 #[napi]
