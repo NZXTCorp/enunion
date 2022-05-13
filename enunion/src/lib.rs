@@ -423,6 +423,7 @@ pub fn enunion(attr_input: TokenStream, item: TokenStream) -> TokenStream {
             #[doc(hidden)]
             mod #mod_ident {
                 use ::napi::bindgen_prelude::*;
+                use super::*;
 
                 impl ::napi::bindgen_prelude::FromNapiValue for super::#enum_ident {
                     unsafe fn from_napi_value(__enunion_env: ::napi::sys::napi_env, __enunion_napi_val: ::napi::sys::napi_value) -> ::napi::bindgen_prelude::Result<Self> {
