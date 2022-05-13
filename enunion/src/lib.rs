@@ -405,7 +405,6 @@ pub fn enunion(attr_input: TokenStream, item: TokenStream) -> TokenStream {
     });
     let mut e_altered = e.clone();
     // remove the `enunion` attributes from the resulting enum, they've been parsed.
-    //remove_attrs(&mut e_altered.attrs);
     for v in &mut e_altered.variants {
         v.attrs.retain(|a| {
             a.path
