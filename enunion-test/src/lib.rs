@@ -10,6 +10,7 @@ pub enum Foo {
     c: String,
     my_multi_word_field: i32,
   },
+  UnionVariant(TestObject, TestObjectTwo),
 }
 
 #[enunion::enunion(discriminant_repr = "bool")]
@@ -30,6 +31,7 @@ pub enum FooString {
   Bar,
   #[enunion(discriminant_value = "baaz")]
   Baz { a: i32, b: u32, c: String },
+  UnionVariant(TestObject, TestObjectTwo),
 }
 
 #[enunion::enunion(discriminant_repr = "enum")]
@@ -37,6 +39,7 @@ pub enum FooEnum {
   Bar,
   #[enunion(discriminant_value = "Baaz")]
   Baz { a: i32, b: u32, c: String },
+  UnionVariant(TestObject, TestObjectTwo),
 }
 
 #[enunion::enunion(discriminant_repr = "enum_str")]
@@ -44,6 +47,7 @@ pub enum FooEnumStr {
   Bar,
   #[enunion(discriminant_value = "Baaz")]
   Baz { a: i32, b: u32, c: String },
+  UnionVariant(TestObject, TestObjectTwo),
 }
 
 #[enunion::enunion(discriminant_repr = "none")]
@@ -58,24 +62,28 @@ pub enum FooNoDiscriminant {
 pub enum FooNew {
   Bar,
   Baz { a: i32, b: u32, c: String },
+  UnionVariant(TestObject, TestObjectTwo),
 }
 
 #[enunion::enunion(discriminant_repr = "str", discriminant_field_name = "new_type")]
 pub enum FooStringNew {
   Bar,
   Baz { a: i32, b: u32, c: String },
+  UnionVariant(TestObject, TestObjectTwo),
 }
 
 #[enunion::enunion(discriminant_repr = "enum", discriminant_field_name = "new_type")]
 pub enum FooEnumNew {
   Bar,
   Baz { a: i32, b: u32, c: String },
+  UnionVariant(TestObject, TestObjectTwo),
 }
 
 #[enunion::enunion(discriminant_repr = "enum_str", discriminant_field_name = "new_type")]
 pub enum FooEnumStrNew {
   Bar,
   Baz { a: i32, b: u32, c: String },
+  UnionVariant(TestObject, TestObjectTwo),
 }
 
 #[enunion::enunion]
@@ -91,6 +99,18 @@ pub enum StringTest {
   Bar = "bar",
   Baz = "baz",
   Zoom,
+}
+
+#[napi(object)]
+pub struct TestObject {
+  pub test_1: i32,
+  pub test_2: Option<i32>,
+}
+
+#[napi(object)]
+pub struct TestObjectTwo {
+  pub test_3: i32,
+  pub test_4: Option<i32>,
 }
 
 #[napi]

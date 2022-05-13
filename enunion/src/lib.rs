@@ -15,7 +15,8 @@ use syn::{
     Expr, ExprLit, Field, Fields, Ident, ItemEnum, Lit, MetaNameValue, Variant, VisPublic,
 };
 
-const SUPPORTED_REPR_TYPES: &'static str = "\"i64\", \"enum\", \"enum_str\", \"none\", \"str\", or \"bool\"";
+const SUPPORTED_REPR_TYPES: &'static str =
+    "\"i64\", \"enum\", \"enum_str\", \"none\", \"str\", or \"bool\"";
 
 /// This macro is applied to Rust enums. It generates code that will expose the enum to TypeScript as a discriminated union. It uses `napi` to accomplish this.
 /// Enunion also handles automatically converting between the two representations, in Rust you can define `#[napi]` methods that accept the enum as an argument, or return an instance of that enum.
@@ -198,8 +199,9 @@ pub fn enunion(attr_input: TokenStream, item: TokenStream) -> TokenStream {
     };
     if repr != DiscriminantRepr::None {
         // Check for duplicate discriminant values
-        let mut sorted_idents = struct_variants_iter()
-            .map(|(v, v_data)| (&v.ident, &v_data.const_value))
+        let mut sorted_idents = variants
+            .iter()
+            .map(|v| (&v.variant.ident, &v.const_value))
             .collect::<Vec<_>>();
         sorted_idents.sort_unstable_by_key(|(_variant_ident, value)| value.to_string());
         for w in sorted_idents.windows(2) {
@@ -212,16 +214,16 @@ pub fn enunion(attr_input: TokenStream, item: TokenStream) -> TokenStream {
         "__enunion_{}",
         heck::AsSnekCase(e.ident.to_string()).to_string()
     );
-    let init_fn_idents = struct_variants_iter().map(|(v, _v_data)| {
+    let init_fn_idents = variants.iter().map(|v| {
         format_ident!(
             "____napi_register__enunion_{}",
-            heck::AsSnekCase(v.ident.to_string()).to_string()
+            heck::AsSnekCase(v.variant.ident.to_string()).to_string()
         )
     });
-    let cb_names = struct_variants_iter().map(|(v, _v_data)| {
+    let cb_names = variants.iter().map(|v| {
         format_ident!(
             "__enunion_callback_{}",
-            heck::AsSnekCase(v.ident.to_string()).to_string()
+            heck::AsSnekCase(v.variant.ident.to_string()).to_string()
         )
     });
     let enum_ident = &e.ident;
@@ -258,31 +260,37 @@ pub fn enunion(attr_input: TokenStream, item: TokenStream) -> TokenStream {
                         .iter()
                         .filter_map(|v| {
                             match &v.data {
-                                VariantData::Transparent { types } => Some(types),
+                                VariantData::Transparent { types } => {
+                                    Some((types, &v.const_value_ts))
+                                }
                                 _ => None,
                             }
                         })
-                        .map(|types| types
+                        .map(|(types, const_value_ts)| types
                             .iter()
                             .map(|ty| napi_derive_backend::ty_to_ts_type(ty, false, false).0)
+                            .chain((repr != DiscriminantRepr::None).then(|| format!(
+                                "{{ {}: {} }}",
+                                discriminant_field_name_js_case, const_value_ts
+                            )))
                             .join(" & "))
                 )
                 .join(" | ")
         )
         .expect("Failed to write to TS output file");
         if repr != DiscriminantRepr::None {
-            for (_v, v_data) in struct_variants_iter() {
+            for v in variants.iter() {
                 writeln!(
                     ts,
                     "export const {ident}: {value};",
-                    ident = v_data.const_ident,
-                    value = v_data.const_value_ts
+                    ident = v.const_ident,
+                    value = v.const_value_ts
                 )
                 .expect("Failed to write to TS output file");
                 writeln!(
                     js,
                     "module.exports.{ident} = nativeBinding.{ident};",
-                    ident = v_data.const_ident,
+                    ident = v.const_ident,
                 )
                 .expect("Failed to write to JS output file");
             }
@@ -292,14 +300,10 @@ pub fn enunion(attr_input: TokenStream, item: TokenStream) -> TokenStream {
         let mut js_f = File::create(&js_path).expect("Failed to open JS output file");
         js_f.write_all(js.as_bytes()).unwrap();
     }
-    let const_idents = struct_variants_iter()
-        .map(|(_v, v_data)| &v_data.const_ident)
-        .collect::<Vec<_>>();
-    let const_values = struct_variants_iter()
-        .map(|(_v, v_data)| &v_data.const_value)
-        .collect::<Vec<_>>();
-    let ts_type_attrs = struct_variants_iter().map(|(_v, v_data)| {
-        let const_value = syn::LitStr::new(&v_data.const_value_ts.to_string(), Span::call_site());
+    let const_idents = variants.iter().map(|v| &v.const_ident).collect::<Vec<_>>();
+    let const_values = variants.iter().map(|v| &v.const_value).collect::<Vec<_>>();
+    let ts_type_attrs = variants.iter().map(|v| {
+        let const_value = syn::LitStr::new(&v.const_value_ts.to_string(), Span::call_site());
         quote! {
             #[napi(ts_type = #const_value)]
         }
@@ -322,8 +326,9 @@ pub fn enunion(attr_input: TokenStream, item: TokenStream) -> TokenStream {
         }
         pub_fields
     });
-    let variant_idents = struct_variants_iter()
-        .map(|(v, _v_data)| &v.ident)
+    let variant_idents = variants
+        .iter()
+        .map(|v| &v.variant.ident)
         .collect::<Vec<_>>();
     let enum_field_idents = struct_variants_iter()
         .map(|(_v, v_data)| {
@@ -365,19 +370,11 @@ pub fn enunion(attr_input: TokenStream, item: TokenStream) -> TokenStream {
             }
         }
     };
-    let enum_pattern_tokens = struct_variants_iter().map(|(_v, v_data)| {
-        if v_data.fields.is_empty() {
-            proc_macro2::TokenStream::new()
-        } else {
-            quote! { { .. } }
-        }
-    });
-    let discriminant_enum_idents = struct_variants_iter().map(|(v, v_data)| {
-        v_data
-            .discriminant_value
+    let discriminant_enum_idents = variants.iter().map(|v| {
+        v.discriminant_value
             .as_ref()
             .map(|v| Ident::new(v, Span::call_site()))
-            .unwrap_or_else(|| v.ident.clone())
+            .unwrap_or_else(|| v.variant.ident.clone())
     });
 
     let discriminant_enum = discriminant_enum_ident.map(|i| {
@@ -416,6 +413,78 @@ pub fn enunion(attr_input: TokenStream, item: TokenStream) -> TokenStream {
         });
     }
     if repr != DiscriminantRepr::None {
+        let from_arms = variants.iter()
+            .map(|v| {
+                let v_ident = &v.variant.ident;
+                let const_ident = &v.const_ident;
+                match &v.data {
+                    VariantData::Struct(data) => {
+                        let struct_ident = &data.struct_ident;
+                        quote! {
+                            Some(#const_ident) => Ok(<#struct_ident as Into<super::#enum_ident>>::into(#struct_ident::try_from(o)?)),
+                        }
+                    }
+                    VariantData::Transparent { types} => {
+                        let field_range = (0..types.len()).map(|i| format_ident!("_{}", i)).collect::<Vec<_>>();
+                        quote! {
+                            Some(#const_ident) => match (
+                                #(
+                                    <#types as ::napi::bindgen_prelude::FromNapiValue>::from_napi_value(__enunion_env, __enunion_napi_val)
+                                ),*
+                            ) {
+                                ( #(Ok(#field_range)),* ) => {
+                                    return Ok(super::#enum_ident::#v_ident ( #(#field_range),* ));
+                                }
+                                ( #(#field_range @ _),* ) => {
+                                    let mut errs = Vec::new();
+                                    #(
+                                        if let Err(e) = #field_range {
+                                            errs.push(e);
+                                        }
+                                    )*
+                                    return Err(::napi::Error::from_reason(format!("JS object provided was not a valid {}, discriminant is {:?}, but encountered errors deserializing as that type {:?}", stringify!(#enum_ident), ty, errs)))
+                                }
+                            }
+                        }
+                    }
+                }
+            })
+            .collect::<proc_macro2::TokenStream>();
+        let into_arms = variants.iter()
+            .map(|v| {
+                let variant_ident = &v.variant.ident;
+                match &v.data {
+                    VariantData::Struct(data) => {
+                        let enum_pattern_tokens = if data.fields.is_empty() {
+                            proc_macro2::TokenStream::new()
+                        } else {
+                            quote! { { .. } }
+                        };
+                        let struct_ident = &data.struct_ident;
+                        quote! {
+                            val @ super::#enum_ident::#variant_ident #enum_pattern_tokens => <#struct_ident as ::napi::bindgen_prelude::ToNapiValue>::to_napi_value(__enunion_env, val.try_into().unwrap()),
+                        }
+                    }
+                    VariantData::Transparent { types} => {
+                        let field_range = (0..types.len()).map(|i| format_ident!("_{}", i)).collect::<Vec<_>>();
+                        quote! {
+                            super::#enum_ident::#variant_ident(#(#field_range),*) => {
+                                let env = unsafe { ::napi::Env::from_raw(__enunion_env) };
+                                let mut merged_object = env.create_object().unwrap();
+                                #(
+                                    let sub_object = unsafe { <::napi::JsObject as ::napi::NapiValue>::from_raw(__enunion_env, <#types as ::napi::bindgen_prelude::ToNapiValue>::to_napi_value(__enunion_env, #field_range).unwrap()).expect("enunion doesn't support intersection types where the members aren't objects") };
+                                    let keys = ::napi::JsObject::keys(&sub_object).unwrap();
+                                    for key in keys {
+                                        merged_object.set_named_property::<::napi::JsUnknown>(&key, sub_object.get_named_property::<::napi::JsUnknown>(&key).unwrap()).unwrap();
+                                    }
+                                )*
+                                Ok(<::napi::JsObject as ::napi::NapiRaw>::raw(&merged_object))
+                            },
+                        }
+                    }
+                }
+            })
+            .collect::<proc_macro2::TokenStream>();
         quote! {
             #e_altered
 
@@ -429,7 +498,7 @@ pub fn enunion(attr_input: TokenStream, item: TokenStream) -> TokenStream {
                         let o = <::napi::JsObject as ::napi::bindgen_prelude::FromNapiValue>::from_napi_value(__enunion_env, __enunion_napi_val)?;
                         let ty: Option<#discriminant_type_dynamic> = o.get(stringify!(#discriminant_field_name_js_case))?;
                         match #ty_compare_expr {
-                            #(Some(#const_idents) => Ok(<#struct_idents as Into<super::#enum_ident>>::into(#struct_idents::try_from(o)?)),)*
+                            #from_arms
                             _ => Err(::napi::Error::from_reason(format!("JS object provided was not a valid {}, ty is {:?}", stringify!(#enum_ident), ty)))
                         }
                     }
@@ -437,8 +506,8 @@ pub fn enunion(attr_input: TokenStream, item: TokenStream) -> TokenStream {
 
                 impl ::napi::bindgen_prelude::ToNapiValue for super::#enum_ident {
                     unsafe fn to_napi_value(__enunion_env: ::napi::sys::napi_env, val: Self) -> ::napi::bindgen_prelude::Result<::napi::sys::napi_value> {
-                        match &val {
-                            #(super::#enum_ident::#variant_idents #enum_pattern_tokens => <#struct_idents as ::napi::bindgen_prelude::ToNapiValue>::to_napi_value(__enunion_env, val.try_into().unwrap()),)*
+                        match val {
+                            #into_arms
                         }
                     }
                 }
@@ -447,6 +516,22 @@ pub fn enunion(attr_input: TokenStream, item: TokenStream) -> TokenStream {
 
                 #(
                     const #const_idents: #discriminant_type = #const_values;
+
+                    #[allow(non_snake_case)]
+                    #[allow(clippy::all)]
+                    unsafe fn #cb_names(env: napi::sys::napi_env) -> napi::Result<napi::sys::napi_value> {
+                        <#discriminant_type as napi::bindgen_prelude::ToNapiValue>::to_napi_value(env, #const_idents)
+                    }
+                    #[allow(non_snake_case)]
+                    #[allow(clippy::all)]
+                    #[cfg(not(test))]
+                    #[::napi::bindgen_prelude::ctor]
+                    fn #init_fn_idents() {
+                        ::napi::bindgen_prelude::register_module_export(None, concat!(stringify!(#const_idents), "\0"), #cb_names);
+                    }
+                )*
+
+                #(
                     #[::napi_derive::napi(object)]
                     struct #struct_idents {
                         #struct_fields
@@ -486,19 +571,6 @@ pub fn enunion(attr_input: TokenStream, item: TokenStream) -> TokenStream {
                                 #discriminant_field_name: #const_idents,
                             })
                         }
-                    }
-
-                    #[allow(non_snake_case)]
-                    #[allow(clippy::all)]
-                    unsafe fn #cb_names(env: napi::sys::napi_env) -> napi::Result<napi::sys::napi_value> {
-                        <#discriminant_type as napi::bindgen_prelude::ToNapiValue>::to_napi_value(env, #const_idents)
-                    }
-                    #[allow(non_snake_case)]
-                    #[allow(clippy::all)]
-                    #[cfg(not(test))]
-                    #[::napi::bindgen_prelude::ctor]
-                    fn #init_fn_idents() {
-                        ::napi::bindgen_prelude::register_module_export(None, concat!(stringify!(#const_idents), "\0"), #cb_names);
                     }
                 )*
 
@@ -675,17 +747,17 @@ enum VariantData {
 struct VariantComputedData<'a> {
     variant: &'a Variant,
     data: VariantData,
+    const_ident: Ident,
+    const_value: proc_macro2::TokenStream,
+    const_value_ts: String,
+    discriminant_value: Option<String>,
 }
 
 struct VariantStructData {
     fields: Punctuated<Field, Comma>,
-    const_ident: Ident,
     struct_ident: Ident,
-    const_value: proc_macro2::TokenStream,
-    const_value_ts: String,
     enum_field_tokens: proc_macro2::TokenStream,
     struct_field_tokens: proc_macro2::TokenStream,
-    discriminant_value: Option<String>,
 }
 
 impl<'a> VariantComputedData<'a> {
@@ -698,23 +770,8 @@ impl<'a> VariantComputedData<'a> {
         variant_index: usize,
     ) -> Self {
         if variant.discriminant.is_some() {
-            abort_call_site!("Manually specified discriminants are not supported, please remove the discriminant on {}::{}", enum_ident, variant.ident);
+            abort_call_site!("Please use #[enunion(discriminant_value = \"value\") to specify the discriminant value, the ` = value` style on {}::{} is not supported", enum_ident, variant.ident);
         }
-        let fields = match &variant.fields {
-            Fields::Named(named) => named.named.clone(),
-            Fields::Unit => Punctuated::new(),
-            Fields::Unnamed(unnamed) => {
-                if repr != DiscriminantRepr::None {
-                    abort_call_site!("Using a discriminant is not compatible with tuple enum variants such as {}::{}, try using named fields instead. Alternatively, use \"none\" discriminant_repr.", enum_ident, variant.ident)
-                }
-                return Self {
-                    variant,
-                    data: VariantData::Transparent {
-                        types: unnamed.unnamed.iter().map(|f| f.ty.clone()).collect(),
-                    },
-                };
-            }
-        };
         let const_ident = format_ident!(
             "{}_TYPE_{}",
             heck::AsShoutySnekCase(enum_ident.to_string()).to_string(),
@@ -799,41 +856,51 @@ impl<'a> VariantComputedData<'a> {
                 ),
             ),
         };
-        let mut enum_field_tokens = fields
-            .iter()
-            .map(|f| {
-                let ident = &f.ident;
-                quote! {
-                    #ident,
+        let compute_struct_variant = |fields: Punctuated<Field, Comma>| {
+            let mut enum_field_tokens = fields
+                .iter()
+                .map(|f| {
+                    let ident = &f.ident;
+                    quote! {
+                        #ident,
+                    }
+                })
+                .collect::<proc_macro2::TokenStream>();
+            let mut struct_field_tokens = enum_field_tokens.clone();
+            struct_field_tokens.extend(quote! {
+                #discriminant_field_name: #const_ident,
+            });
+            for t in &mut [&mut struct_field_tokens, &mut enum_field_tokens] {
+                let mut ret = proc_macro2::TokenStream::new();
+                let t_clone = t.clone();
+                Brace {
+                    span: Span::call_site(),
                 }
-            })
-            .collect::<proc_macro2::TokenStream>();
-        let mut struct_field_tokens = enum_field_tokens.clone();
-        struct_field_tokens.extend(quote! {
-            #discriminant_field_name: #const_ident,
-        });
-        for t in &mut [&mut struct_field_tokens, &mut enum_field_tokens] {
-            let mut ret = proc_macro2::TokenStream::new();
-            let t_clone = t.clone();
-            Brace {
-                span: Span::call_site(),
+                .surround(&mut ret, |ret| ret.extend(t_clone));
+                **t = ret;
             }
-            .surround(&mut ret, |ret| ret.extend(t_clone));
-            **t = ret;
-        }
-        let struct_ident = format_ident!("{}{}", enum_ident, variant.ident);
-        Self {
-            variant,
-            data: VariantData::Struct(VariantStructData {
+            let struct_ident = format_ident!("{}{}", enum_ident, variant.ident);
+            VariantData::Struct(VariantStructData {
                 fields,
                 struct_ident,
-                const_ident,
-                const_value,
-                const_value_ts,
                 enum_field_tokens,
                 struct_field_tokens,
-                discriminant_value,
-            }),
+            })
+        };
+        let data = match &variant.fields {
+            Fields::Named(named) => (compute_struct_variant)(named.named.clone()),
+            Fields::Unit => (compute_struct_variant)(Punctuated::new()),
+            Fields::Unnamed(unnamed) => VariantData::Transparent {
+                types: unnamed.unnamed.iter().map(|f| f.ty.clone()).collect(),
+            },
+        };
+        Self {
+            variant,
+            const_ident,
+            const_value,
+            const_value_ts,
+            discriminant_value,
+            data,
         }
     }
 }
