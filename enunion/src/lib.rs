@@ -474,10 +474,12 @@ pub fn enunion(attr_input: TokenStream, item: TokenStream) -> TokenStream {
                                 let env = unsafe { ::napi::Env::from_raw(__enunion_env) };
                                 let mut merged_object = env.create_object()?;
                                 #(
-                                    let sub_object = unsafe { <::napi::JsObject as ::napi::NapiValue>::from_raw(__enunion_env, <#types as ::napi::bindgen_prelude::ToNapiValue>::to_napi_value(__enunion_env, #field_range)?).expect("enunion doesn't support intersection types where the members aren't objects") };
-                                    let keys = ::napi::JsObject::keys(&sub_object)?;
-                                    for key in keys {
-                                        merged_object.set_named_property::<::napi::JsUnknown>(&key, sub_object.get_named_property::<::napi::JsUnknown>(&key)?)?;
+                                    {
+                                        let sub_object = unsafe { <::napi::JsObject as ::napi::NapiValue>::from_raw(__enunion_env, <#types as ::napi::bindgen_prelude::ToNapiValue>::to_napi_value(__enunion_env, #field_range)?).expect("enunion doesn't support intersection types where the members aren't objects") };
+                                        let keys = ::napi::JsObject::keys(&sub_object)?;
+                                        for key in keys {
+                                            merged_object.set_named_property::<::napi::JsUnknown>(&key, sub_object.get_named_property::<::napi::JsUnknown>(&key)?)?;
+                                        }
                                     }
                                 )*
                                 merged_object.set(#discriminant_field_name_js_case, #const_ident)?;
@@ -691,10 +693,12 @@ pub fn enunion(attr_input: TokenStream, item: TokenStream) -> TokenStream {
                                     let env = unsafe { ::napi::Env::from_raw(__enunion_env) };
                                     let mut merged_object = env.create_object()?;
                                     #(
-                                        let sub_object = unsafe { <::napi::JsObject as ::napi::NapiValue>::from_raw(__enunion_env, <#types as ::napi::bindgen_prelude::ToNapiValue>::to_napi_value(__enunion_env, #field_range)?).expect("enunion doesn't support intersection types where the members aren't objects") };
-                                        let keys = ::napi::JsObject::keys(&sub_object)?;
-                                        for key in keys {
-                                            merged_object.set_named_property::<::napi::JsUnknown>(&key, sub_object.get_named_property::<::napi::JsUnknown>(&key)?)?;
+                                        {
+                                            let sub_object = unsafe { <::napi::JsObject as ::napi::NapiValue>::from_raw(__enunion_env, <#types as ::napi::bindgen_prelude::ToNapiValue>::to_napi_value(__enunion_env, #field_range)?).expect("enunion doesn't support intersection types where the members aren't objects") };
+                                            let keys = ::napi::JsObject::keys(&sub_object)?;
+                                            for key in keys {
+                                                merged_object.set_named_property::<::napi::JsUnknown>(&key, sub_object.get_named_property::<::napi::JsUnknown>(&key)?)?;
+                                            }
                                         }
                                     )*
                                     Ok(<::napi::JsObject as ::napi::NapiRaw>::raw(&merged_object))
