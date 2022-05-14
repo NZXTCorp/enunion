@@ -12,7 +12,7 @@ use syn::{
     parse::{Parse, ParseStream},
     punctuated::Punctuated,
     token::{Brace, Comma, Pub},
-    Expr, ExprLit, Field, Fields, Ident, ItemEnum, Lit, MetaNameValue, Variant, VisPublic,
+    Expr, ExprLit, Field, Fields, Ident, ItemEnum, Lit, LitStr, MetaNameValue, Variant, VisPublic,
 };
 
 const SUPPORTED_REPR_TYPES: &'static str =
@@ -154,9 +154,9 @@ pub fn enunion(attr_input: TokenStream, item: TokenStream) -> TokenStream {
         .unwrap_or_else(|| {
             format_ident!("{}_type", heck::AsSnekCase(e.ident.to_string()).to_string())
         });
-    let discriminant_field_name_js_case = format_ident!(
-        "{}",
-        heck::AsLowerCamelCase(discriminant_field_name.to_string()).to_string()
+    let discriminant_field_name_js_case = LitStr::new(
+        &heck::AsLowerCamelCase(discriminant_field_name.to_string()).to_string(),
+        Span::call_site(),
     );
     let repr = repr.unwrap_or(DiscriminantRepr::I64);
     let mut discriminant_enum_ident = None;
@@ -271,7 +271,8 @@ pub fn enunion(attr_input: TokenStream, item: TokenStream) -> TokenStream {
                             .map(|ty| napi_derive_backend::ty_to_ts_type(ty, false, false).0)
                             .chain((repr != DiscriminantRepr::None).then(|| format!(
                                 "{{ {}: {} }}",
-                                discriminant_field_name_js_case, const_value_ts
+                                discriminant_field_name_js_case.value(),
+                                const_value_ts
                             )))
                             .join(" & "))
                 )
@@ -467,17 +468,19 @@ pub fn enunion(attr_input: TokenStream, item: TokenStream) -> TokenStream {
                     }
                     VariantData::Transparent { types} => {
                         let field_range = (0..types.len()).map(|i| format_ident!("_{}", i)).collect::<Vec<_>>();
+                        let const_ident = &v.const_ident;
                         quote! {
                             super::#enum_ident::#variant_ident(#(#field_range),*) => {
                                 let env = unsafe { ::napi::Env::from_raw(__enunion_env) };
-                                let mut merged_object = env.create_object().unwrap();
+                                let mut merged_object = env.create_object()?;
                                 #(
                                     let sub_object = unsafe { <::napi::JsObject as ::napi::NapiValue>::from_raw(__enunion_env, <#types as ::napi::bindgen_prelude::ToNapiValue>::to_napi_value(__enunion_env, #field_range).unwrap()).expect("enunion doesn't support intersection types where the members aren't objects") };
-                                    let keys = ::napi::JsObject::keys(&sub_object).unwrap();
+                                    let keys = ::napi::JsObject::keys(&sub_object)?;
                                     for key in keys {
-                                        merged_object.set_named_property::<::napi::JsUnknown>(&key, sub_object.get_named_property::<::napi::JsUnknown>(&key).unwrap()).unwrap();
+                                        merged_object.set_named_property::<::napi::JsUnknown>(&key, sub_object.get_named_property::<::napi::JsUnknown>(&key)?)?;
                                     }
                                 )*
+                                merged_object.set(#discriminant_field_name_js_case, #const_ident)?;
                                 Ok(<::napi::JsObject as ::napi::NapiRaw>::raw(&merged_object))
                             },
                         }
@@ -496,7 +499,7 @@ pub fn enunion(attr_input: TokenStream, item: TokenStream) -> TokenStream {
                 impl ::napi::bindgen_prelude::FromNapiValue for super::#enum_ident {
                     unsafe fn from_napi_value(__enunion_env: ::napi::sys::napi_env, __enunion_napi_val: ::napi::sys::napi_value) -> ::napi::bindgen_prelude::Result<Self> {
                         let o = <::napi::JsObject as ::napi::bindgen_prelude::FromNapiValue>::from_napi_value(__enunion_env, __enunion_napi_val)?;
-                        let ty: Option<#discriminant_type_dynamic> = o.get(stringify!(#discriminant_field_name_js_case))?;
+                        let ty: Option<#discriminant_type_dynamic> = o.get(#discriminant_field_name_js_case)?;
                         match #ty_compare_expr {
                             #from_arms
                             _ => Err(::napi::Error::from_reason(format!("JS object provided was not a valid {}, ty is {:?}", stringify!(#enum_ident), ty)))
@@ -562,7 +565,7 @@ pub fn enunion(attr_input: TokenStream, item: TokenStream) -> TokenStream {
                         type Error = ::napi::Error;
 
                         fn try_from(o: ::napi::JsObject) -> ::std::result::Result<Self, Self::Error> {
-                            let ty: Option<#discriminant_type_dynamic> = o.get(stringify!(#discriminant_field_name_js_case))?;
+                            let ty: Option<#discriminant_type_dynamic> = o.get(#discriminant_field_name_js_case)?;
                             if #ty_compare_expr != Some(#const_idents) {
                                 return Err(::napi::Error::from_reason(format!("provided object was not {}", stringify!(#struct_idents))));
                             }

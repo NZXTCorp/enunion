@@ -196,3 +196,24 @@ pub fn take_foo(f: Foo) -> Foo {
     my_multi_word_field: 8,
   }
 }
+
+#[napi]
+pub fn take_foo_union(f: Foo) -> Foo {
+  assert!(matches!(
+    f,
+    Foo::UnionVariant(TestObject {
+      test_1: 0,
+      test_2: Some(3)
+    }, TestObjectTwo {
+      test_3: 2,
+      test_4: None,
+    })
+  ));
+  Foo::UnionVariant(TestObject {
+    test_1: 1,
+    test_2: Some(2)
+  }, TestObjectTwo {
+    test_3: 3,
+    test_4: Some(4),
+  })
+}

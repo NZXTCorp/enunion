@@ -9,6 +9,7 @@ import {
   StringTest,
   takeFoo,
   takeFooBool,
+  takeFooUnion,
   takeFooDefault,
   takeFooEnum,
   takeFooEnumStr,
@@ -16,7 +17,7 @@ import {
   takeFooNoDiscriminantTransparentManyStructs,
   takeFooNoDiscriminantTransparentOneField,
   takeFooString,
-  takeStringTest,
+  takeStringTest, FOO_TYPE_UNION_VARIANT,
 } from "../index";
 
 it("calls takeStringTest", () => {
@@ -83,5 +84,21 @@ it("calls takeFoo", () => {
     expect(r.b).toBe(2);
     expect(r.c).toBe("Hello from Rust");
     expect(r.myMultiWordField).toBe(8);
+  }
+});
+
+it("calls takeFooUnion", () => {
+  let r = takeFooUnion({
+    test1: 0,
+    test2: 3,
+    test3: 2,
+    fooType: FOO_TYPE_UNION_VARIANT,
+  });
+  expect(r.fooType).toBe(FOO_TYPE_UNION_VARIANT);
+  if (r.fooType === FOO_TYPE_UNION_VARIANT) {
+    expect(r.test1).toBe(1);
+    expect(r.test2).toBe(2);
+    expect(r.test3).toBe(3);
+    expect(r.test4).toBe(4);
   }
 });
