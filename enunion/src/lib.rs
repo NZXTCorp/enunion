@@ -150,7 +150,11 @@ pub fn enunion(attr_input: TokenStream, item: TokenStream) -> TokenStream {
         )
     });
     if let Some(lt) = &e.generics.lt_token {
-        abort!(lt.spans[0], "enunion does not support generics. Please remove the {} in this declaration.", e.generics.into_token_stream());
+        abort!(
+            lt.spans[0],
+            "enunion does not support generics. Please remove the {} in this declaration.",
+            e.generics.into_token_stream()
+        );
     }
     let discriminant_field_name = discriminant_field_name
         .map(|n| Ident::new(&n, Span::call_site()))
@@ -890,7 +894,12 @@ impl<'a> VariantComputedData<'a> {
         };
         let data = match &variant.fields {
             Fields::Named(named) => (compute_struct_variant)(named.named.clone()),
-            Fields::Unit => (compute_struct_variant)(Punctuated::new()),
+            Fields::Unit => {
+                if DiscriminantRepr::None == repr {
+                    abort!(variant.ident.span(), "discriminant_repr = \"none\" cannot be used with a unit variant. You must add fields.")
+                }
+                (compute_struct_variant)(Punctuated::new())
+            }
             Fields::Unnamed(unnamed) => VariantData::Transparent {
                 types: unnamed.unnamed.iter().map(|f| f.ty.clone()).collect(),
             },
