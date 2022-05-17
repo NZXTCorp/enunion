@@ -1,7 +1,7 @@
 use itertools::Itertools;
 use proc_macro::TokenStream;
 use proc_macro2::Span;
-use proc_macro_error::abort_call_site;
+use proc_macro_error::{abort, abort_call_site};
 use quote::{format_ident, quote, ToTokens};
 use std::env::var;
 use std::fmt::Write as _;
@@ -149,6 +149,9 @@ pub fn enunion(attr_input: TokenStream, item: TokenStream) -> TokenStream {
             e
         )
     });
+    if let Some(lt) = &e.generics.lt_token {
+        abort!(lt.spans[0], "enunion does not support generics. Please remove the {} in this declaration.", e.generics.into_token_stream());
+    }
     let discriminant_field_name = discriminant_field_name
         .map(|n| Ident::new(&n, Span::call_site()))
         .unwrap_or_else(|| {

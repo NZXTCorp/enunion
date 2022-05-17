@@ -30,7 +30,11 @@ pub enum FooBool {
 pub enum FooString {
   Bar,
   #[enunion(discriminant_value = "baaz")]
-  Baz { a: i32, b: u32, c: String },
+  Baz {
+    a: i32,
+    b: u32,
+    c: String,
+  },
   UnionVariant(TestObject, TestObjectTwo),
 }
 
@@ -38,7 +42,11 @@ pub enum FooString {
 pub enum FooEnum {
   Bar,
   #[enunion(discriminant_value = "Baaz")]
-  Baz { a: i32, b: u32, c: String },
+  Baz {
+    a: i32,
+    b: u32,
+    c: String,
+  },
   UnionVariant(TestObject, TestObjectTwo),
 }
 
@@ -46,7 +54,11 @@ pub enum FooEnum {
 pub enum FooEnumStr {
   Bar,
   #[enunion(discriminant_value = "Baaz")]
-  Baz { a: i32, b: u32, c: String },
+  Baz {
+    a: i32,
+    b: u32,
+    c: String,
+  },
   UnionVariant(TestObject, TestObjectTwo),
 }
 
@@ -201,19 +213,25 @@ pub fn take_foo(f: Foo) -> Foo {
 pub fn take_foo_union(f: Foo) -> Foo {
   assert!(matches!(
     f,
-    Foo::UnionVariant(TestObject {
-      test_1: 0,
-      test_2: Some(3)
-    }, TestObjectTwo {
-      test_3: 2,
-      test_4: None,
-    })
+    Foo::UnionVariant(
+      TestObject {
+        test_1: 0,
+        test_2: Some(3)
+      },
+      TestObjectTwo {
+        test_3: 2,
+        test_4: None,
+      }
+    )
   ));
-  Foo::UnionVariant(TestObject {
-    test_1: 1,
-    test_2: Some(2)
-  }, TestObjectTwo {
-    test_3: 3,
-    test_4: Some(4),
-  })
+  Foo::UnionVariant(
+    TestObject {
+      test_1: 1,
+      test_2: Some(2),
+    },
+    TestObjectTwo {
+      test_3: 3,
+      test_4: Some(4),
+    },
+  )
 }
