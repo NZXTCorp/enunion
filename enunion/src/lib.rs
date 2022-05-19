@@ -432,16 +432,16 @@ pub fn enunion(attr_input: TokenStream, item: TokenStream) -> TokenStream {
                                 ),*
                             ) {
                                 ( #(Ok(#field_range)),* ) => {
-                                    return Ok(super::#enum_ident::#v_ident ( #(#field_range),* ));
+                                    Ok(super::#enum_ident::#v_ident ( #(#field_range),* ))
                                 }
-                                ( #(#field_range @ _),* ) => {
+                                ( #(#field_range),* ) => {
                                     let mut errs = Vec::new();
                                     #(
                                         if let Err(e) = #field_range {
                                             errs.push(e);
                                         }
                                     )*
-                                    return Err(::napi::Error::from_reason(format!("JS object provided was not a valid {}, discriminant is {:?}, but encountered errors deserializing as that type {:?}", stringify!(#enum_ident), ty, errs)))
+                                    Err(::napi::Error::from_reason(format!("JS object provided was not a valid {}, discriminant is {:?}, but encountered errors deserializing as that type {:?}", stringify!(#enum_ident), ty, errs)))
                                 }
                             }
                         }
@@ -639,21 +639,19 @@ pub fn enunion(attr_input: TokenStream, item: TokenStream) -> TokenStream {
                         let field_range = (0..types.len()).map(|i| format_ident!("_{}", i)).collect::<Vec<_>>();
                         let v_ident = &v.variant.ident;
                         quote! {
-                            match (
+                            // This is a loop that's guaranteed to execute exactly once.
+                            // Mostly I just wanted to be able to use the `break` keyword.
+                            for _ in Some(()) {
                                 #(
-                                    <#types as ::napi::bindgen_prelude::FromNapiValue>::from_napi_value(__enunion_env, __enunion_napi_val)
-                                ),*
-                            ) {
-                                ( #(Ok(#field_range)),* ) => {
-                                    return Ok(super::#enum_ident::#v_ident ( #(#field_range),* ));
-                                }
-                                ( #(#field_range @ _),* ) => {
-                                    #(
-                                        if let Err(e) = #field_range {
+                                    let #field_range = match <#types as ::napi::bindgen_prelude::FromNapiValue>::from_napi_value(__enunion_env, __enunion_napi_val) {
+                                        Ok(#field_range) => #field_range,
+                                        Err(e) => {
                                             errs.push(e);
+                                            break;
                                         }
-                                    )*
-                                }
+                                    };
+                                )*
+                                return Ok(super::#enum_ident::#v_ident ( #(#field_range),* ));
                             }
                         }
                     },
