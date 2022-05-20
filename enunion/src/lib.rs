@@ -1040,8 +1040,22 @@ pub fn string_enum(_attr_input: TokenStream, item: TokenStream) -> TokenStream {
 
         impl ::std::fmt::Display for #enum_ident {
             fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::result::Result<(), ::std::fmt::Error> {
+                write!(f, "{}", <Self as ::std::convert::AsRef<str>>::as_ref(self))
+            }
+        }
+
+        impl ::std::convert::AsRef<str> for #enum_ident {
+            fn as_ref(&self) -> &str {
                 match self {
-                    #(#enum_ident::#variant_idents => write!(f, "{}", #str_literals),)*
+                    #(#enum_ident::#variant_idents => #str_literals,)*
+                }
+            }
+        }
+
+        impl ::std::convert::From<#enum_ident> for &'static str {
+            fn from(e: #enum_ident) -> Self {
+                match e {
+                    #(#enum_ident::#variant_idents => #str_literals,)*
                 }
             }
         }
