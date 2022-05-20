@@ -60,8 +60,8 @@ it("calls takeFooNoDiscriminantTransparentOneField", () => {
 });
 
 it("calls takeFooNoDiscriminantTransparentManyStructs", () => {
-  let input: FooNoDiscriminant = { newType: FOO_NEW_TYPE_BAR, fooStringType: "FOO_STRING_TYPE_BAR"};
-  expect(takeFooNoDiscriminantTransparentManyStructs(input)).toEqual({ newType: FOO_NEW_TYPE_BAR, fooStringType: "FOO_STRING_TYPE_BAR"});
+  let input: FooNoDiscriminant = { newType: FOO_NEW_TYPE_BAR, fooStringType: FOO_STRING_TYPE_BAR};
+  expect(takeFooNoDiscriminantTransparentManyStructs(input)).toEqual({ newType: FOO_NEW_TYPE_BAR, fooStringType: FOO_STRING_TYPE_BAR});
 });
 
 it("calls takeFooString", () => {

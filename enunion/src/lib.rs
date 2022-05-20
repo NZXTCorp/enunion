@@ -849,7 +849,7 @@ impl<'a> VariantComputedData<'a> {
                 let value = discriminant_value
                     .as_ref()
                     .map(|s| Ident::new(s, Span::call_site()))
-                    .unwrap_or_else(|| const_ident.clone());
+                    .unwrap_or_else(|| variant.ident.clone());
                 (quote! { stringify!(#value) }, format!("\"{}\"", value))
             }
             DiscriminantRepr::None => (
