@@ -15,7 +15,7 @@ use syn::{
     Expr, ExprLit, Field, Fields, Ident, ItemEnum, Lit, LitStr, MetaNameValue, Variant, VisPublic,
 };
 
-const SUPPORTED_REPR_TYPES: &'static str =
+const SUPPORTED_REPR_TYPES: &str =
     "\"i64\", \"enum\", \"enum_str\", \"none\", \"str\", or \"bool\"";
 
 /// This macro is applied to Rust enums. It generates code that will expose the enum to TypeScript as a discriminated union. It uses `napi` to accomplish this.
@@ -200,7 +200,7 @@ pub fn enunion(attr_input: TokenStream, item: TokenStream) -> TokenStream {
         .collect::<Vec<_>>();
     let struct_variants_iter = || {
         variants.iter().filter_map(|v| match &v.data {
-            VariantData::Struct(data) => Some((v.variant, data)),
+            VariantData::Struct(data) => Some((v, data)),
             _ => None,
         })
     };
@@ -305,9 +305,10 @@ pub fn enunion(attr_input: TokenStream, item: TokenStream) -> TokenStream {
         let mut js_f = File::create(&js_path).expect("Failed to open JS output file");
         js_f.write_all(js.as_bytes()).unwrap();
     }
-    let const_idents = variants.iter().map(|v| &v.const_ident).collect::<Vec<_>>();
+    let const_idents = variants.iter().map(|v| &v.const_ident);
+    let struct_const_idents = struct_variants_iter().map(|(v, _v_data)| &v.const_ident);
     let const_values = variants.iter().map(|v| &v.const_value);
-    let ts_type_attrs = variants.iter().map(|v| {
+    let ts_type_attrs = struct_variants_iter().map(|(v, _v_data)| {
         let const_value = syn::LitStr::new(&v.const_value_ts.to_string(), Span::call_site());
         quote! {
             #[napi(ts_type = #const_value)]
@@ -332,6 +333,7 @@ pub fn enunion(attr_input: TokenStream, item: TokenStream) -> TokenStream {
         pub_fields
     });
     let variant_idents = variants.iter().map(|v| &v.variant.ident);
+    let struct_variant_idents = struct_variants_iter().map(|(v, _v_data)| &v.variant.ident);
     let enum_field_idents = struct_variants_iter().map(|(_v, v_data)| {
         v_data
             .fields
@@ -544,7 +546,7 @@ pub fn enunion(attr_input: TokenStream, item: TokenStream) -> TokenStream {
 
                     impl From<#struct_idents> for super::#enum_ident {
                         fn from(s: #struct_idents) -> Self {
-                            Self::#variant_idents {
+                            Self::#struct_variant_idents {
                                 #(#enum_field_idents: s.#enum_field_idents),*
                             }
                         }
@@ -555,7 +557,7 @@ pub fn enunion(attr_input: TokenStream, item: TokenStream) -> TokenStream {
 
                         fn try_from(s: super::#enum_ident) -> ::std::result::Result<Self, Self::Error> {
                             match s {
-                                super::#enum_ident::#variant_idents #enum_field_tokens => Ok(Self #struct_field_tokens),
+                                super::#enum_ident::#struct_variant_idents #enum_field_tokens => Ok(Self #struct_field_tokens),
                                 _ => Err(ContainedValueIsNotOfThatType),
                             }
                         }
@@ -566,12 +568,12 @@ pub fn enunion(attr_input: TokenStream, item: TokenStream) -> TokenStream {
 
                         fn try_from(o: ::napi::JsObject) -> ::std::result::Result<Self, Self::Error> {
                             let ty: Option<#discriminant_type_dynamic> = o.get(#discriminant_field_name_js_case)?;
-                            if #ty_compare_expr != Some(#const_idents) {
+                            if #ty_compare_expr != Some(#struct_const_idents) {
                                 return Err(::napi::Error::from_reason(format!("provided object was not {}", stringify!(#struct_idents))));
                             }
                             Ok(Self {
                                 #(#enum_field_idents: o.get(stringify!(#js_object_field_tokens))?.ok_or_else(|| ::napi::Error::from_reason(format!("conversion to {} failed, field {} is missing", stringify!(#struct_idents), stringify!(#js_object_field_tokens))))?,)*
-                                #discriminant_field_name: #const_idents,
+                                #discriminant_field_name: #struct_const_idents,
                             })
                         }
                     }

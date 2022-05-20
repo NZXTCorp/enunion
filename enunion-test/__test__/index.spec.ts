@@ -17,7 +17,7 @@ import {
   takeFooNoDiscriminantTransparentManyStructs,
   takeFooNoDiscriminantTransparentOneField,
   takeFooString,
-  takeStringTest, FOO_TYPE_UNION_VARIANT,
+  takeStringTest, FOO_TYPE_UNION_VARIANT, FOO_NEW_TYPE_BAR,
 } from "../index";
 
 it("calls takeStringTest", () => {
@@ -60,8 +60,8 @@ it("calls takeFooNoDiscriminantTransparentOneField", () => {
 });
 
 it("calls takeFooNoDiscriminantTransparentManyStructs", () => {
-  let input: FooNoDiscriminant = { newType: 0, fooStringType: "FOO_STRING_TYPE_BAR"};
-  expect(takeFooNoDiscriminantTransparentManyStructs(input)).toEqual({ newType: 0, fooStringType: "FOO_STRING_TYPE_BAR"});
+  let input: FooNoDiscriminant = { newType: FOO_NEW_TYPE_BAR, fooStringType: "FOO_STRING_TYPE_BAR"};
+  expect(takeFooNoDiscriminantTransparentManyStructs(input)).toEqual({ newType: FOO_NEW_TYPE_BAR, fooStringType: "FOO_STRING_TYPE_BAR"});
 });
 
 it("calls takeFooString", () => {
