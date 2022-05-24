@@ -4,12 +4,14 @@ import {
   FOO_BOOL_TYPE_BAR,
   FOO_ENUM_STR_TYPE_BAR,
   FOO_ENUM_TYPE_BAR,
+  FOO_NEW_TYPE_BAR,
   FOO_STRING_TYPE_BAR,
-  FOO_TYPE_BAZ, FooNew, FooNoDiscriminant, FooStringNew,
+  FOO_TYPE_BAZ,
+  FOO_TYPE_UNION_VARIANT,
+  FooNoDiscriminant,
   StringTest,
   takeFoo,
   takeFooBool,
-  takeFooUnion,
   takeFooDefault,
   takeFooEnum,
   takeFooEnumStr,
@@ -17,7 +19,12 @@ import {
   takeFooNoDiscriminantTransparentManyStructs,
   takeFooNoDiscriminantTransparentOneField,
   takeFooString,
-  takeStringTest, FOO_TYPE_UNION_VARIANT, FOO_NEW_TYPE_BAR,
+  takeFooUnion,
+  takeLiteralDiscriminatedEnunion1,
+  takeLiteralDiscriminatedEnunion2,
+  takeLiteralDiscriminatedEnunion3,
+  takeLiteralStructs,
+  takeStringTest,
 } from "../index";
 
 it("calls takeStringTest", () => {
@@ -102,3 +109,35 @@ it("calls takeFooUnion", () => {
     expect(r.test4).toBe(4);
   }
 });
+
+it("calls takeLiteralStructs", () => {
+  let l = takeLiteralStructs({
+    foo: 1,
+    bar: true,
+  });
+  expect(l.foo).toBe("foolicious");
+  expect(l.bar).toBe(false);
+})
+
+it("check Serialization and Deserialization of LiteralDiscriminated", () => {
+  let l = takeLiteralDiscriminatedEnunion1({
+    foo: 1,
+    bar: true,
+  });
+  expect(l.foo).toBe("foolicious")
+  expect(l.bar).toBe(false)
+
+  let l2 = takeLiteralDiscriminatedEnunion2({
+    foo: "foolicious",
+    bar: false,
+  });
+  expect(l2.foo).toBe(1)
+  expect(l2.bar).toBe(true)
+
+  let l3 = takeLiteralDiscriminatedEnunion3({
+    foo: StringTest.Zoom,
+    bar: StringTest.Bar,
+  });
+  expect(l3.foo).toBe(StringTest.Zoom);
+  expect(l3.bar).toBe(StringTest.Bar);
+})

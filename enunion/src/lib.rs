@@ -1,18 +1,21 @@
 use itertools::Itertools;
 use proc_macro::TokenStream;
 use proc_macro2::Span;
-use proc_macro_error::{abort, abort_call_site};
+use proc_macro_error::{abort, abort_call_site, emit_error};
 use quote::{format_ident, quote, ToTokens};
 use std::env::var;
 use std::fmt::Write as _;
 use std::fs::{create_dir_all, File};
 use std::io::Write;
 use std::path::PathBuf;
+use syn::token::{Bracket, Pound};
 use syn::{
     parse::{Parse, ParseStream},
     punctuated::Punctuated,
+    spanned::Spanned,
     token::{Brace, Comma, Pub},
-    Expr, ExprLit, Field, Fields, Ident, ItemEnum, Lit, LitStr, MetaNameValue, Variant, VisPublic,
+    AttrStyle, Attribute, Expr, ExprLit, ExprPath, Field, Fields, Ident, ItemEnum, Lit, LitStr,
+    MetaNameValue, Path, PathArguments, PathSegment, Token, Type, TypePath, Variant, VisPublic,
 };
 
 const SUPPORTED_REPR_TYPES: &str =
@@ -97,7 +100,7 @@ const SUPPORTED_REPR_TYPES: &str =
 #[proc_macro_error::proc_macro_error]
 #[proc_macro_attribute]
 pub fn enunion(attr_input: TokenStream, item: TokenStream) -> TokenStream {
-    let attr: Args = syn::parse(attr_input).unwrap_or_else(|e| abort_call_site!("Failed to parse enunion input, please use field = \"value\" in a comma separated list. Check the documentation for examples. Error: {:?}", e));
+    let attr: Args = syn::parse(attr_input).unwrap_or_else(|e| abort_call_site!("Failed to parse enunion input, please use field = \"value\" in a Token!(,) separated list. Check the documentation for examples. Error: {:?}", e));
     let mut repr = None;
     let mut discriminant_field_name = None;
     for MetaNameValue { path, lit, .. } in attr.items.iter() {
@@ -183,21 +186,42 @@ pub fn enunion(attr_input: TokenStream, item: TokenStream) -> TokenStream {
             (i.clone(), i)
         }
     };
-    let variants = e
-        .variants
-        .iter()
-        .enumerate()
-        .map(|(i, v)| {
-            VariantComputedData::new(
-                &e.ident,
-                &discriminant_enum_ident,
-                v,
-                repr,
-                &discriminant_field_name,
-                i,
-            )
-        })
-        .collect::<Vec<_>>();
+    let variants = {
+        let mut errs = Vec::new();
+        let mut variants = Vec::new();
+        let iter = e
+            .variants
+            .iter()
+            .enumerate()
+            .map(|(i, v)| {
+                VariantComputedData::new(
+                    &e.ident,
+                    &discriminant_enum_ident,
+                    v,
+                    repr,
+                    &discriminant_field_name,
+                    i,
+                )
+            })
+            .map(|r| match r {
+                Ok(v) => variants.push(v),
+                Err(e) => errs.push(e),
+            });
+        for _ in iter {}
+        if !errs.is_empty() {
+            let mut errs = errs.into_iter().peekable();
+            while let Some(err) = errs.next() {
+                if errs.peek().is_some() {
+                    emit_error!(err.0, "{}", err.1);
+                } else {
+                    abort!(err.0, "{}", err.1);
+                }
+            }
+            unreachable!()
+        } else {
+            variants
+        }
+    };
     let struct_variants_iter = || {
         variants.iter().filter_map(|v| match &v.data {
             VariantData::Struct(data) => Some((v, data)),
@@ -324,7 +348,7 @@ pub fn enunion(attr_input: TokenStream, item: TokenStream) -> TokenStream {
             }
             .into();
         }
-        // The trailing comma is important, because we're adding one more field.
+        // The trailing Token!(,) is important, because we're adding one more field.
         if !pub_fields.empty_or_trailing() {
             pub_fields.push_punct(Comma {
                 spans: [Span::call_site()],
@@ -759,7 +783,7 @@ struct VariantComputedData<'a> {
 }
 
 struct VariantStructData {
-    fields: Punctuated<Field, Comma>,
+    fields: Punctuated<Field, Token!(,)>,
     struct_ident: Ident,
     enum_field_tokens: proc_macro2::TokenStream,
     struct_field_tokens: proc_macro2::TokenStream,
@@ -773,9 +797,9 @@ impl<'a> VariantComputedData<'a> {
         repr: DiscriminantRepr,
         discriminant_field_name: &Ident,
         variant_index: usize,
-    ) -> Self {
+    ) -> Result<Self, (Span, String)> {
         if variant.discriminant.is_some() {
-            abort_call_site!("Please use #[enunion(discriminant_value = \"value\") to specify the discriminant value, the ` = value` style on {}::{} is not supported", enum_ident, variant.ident);
+            return Err((Span::call_site(), format!("Please use #[enunion(discriminant_value = \"value\") to specify the discriminant value, the ` = value` style on {}::{} is not supported", enum_ident, variant.ident)));
         }
         let const_ident = format_ident!(
             "{}_TYPE_{}",
@@ -791,7 +815,8 @@ impl<'a> VariantComputedData<'a> {
                 .map(ToString::to_string)
                 .as_deref() == Some("enunion")
             )
-            .map(|a| a.parse_args::<Args>().unwrap_or_else(|e| abort_call_site!("Failed to parse enunion variant `{}` attribute input, please use field = \"value\" in a comma separated list. Check the documentation for examples. Error: {:?}", variant.ident, e)));
+            .map(|a| a.parse_args::<Args>().map_err(|e| (Span::call_site(), format!("Failed to parse enunion variant `{}` attribute input, please use field = \"value\" in a Token!(,) separated list. Check the documentation for examples. Error: {:?}", variant.ident, e))))
+            .transpose()?;
         let mut discriminant_value = None;
         if let Some(variant_args) = variant_args {
             for arg in variant_args.items {
@@ -804,10 +829,10 @@ impl<'a> VariantComputedData<'a> {
                             discriminant_value = Some(i.base10_digits().to_string());
                         }
                         _ => {
-                            abort_call_site!("literal type provided for {} is not supported, please use a string or an integer.", variant.ident);
+                            return Err((Span::call_site(), format!("literal type provided for {} is not supported, please use a string or an integer.", variant.ident)));
                         }
                     }
-                    _ => abort_call_site!("{} was not a recognized enunion argument, please use `discriminant_value`.", arg.path.to_token_stream())
+                    _ => return Err((Span::call_site(), format!("{} was not a recognized enunion argument, please use `discriminant_value`.", arg.path.to_token_stream())))
                 }
             }
         }
@@ -817,21 +842,32 @@ impl<'a> VariantComputedData<'a> {
                     .as_deref()
                     .map(|s| s
                         .parse()
-                        .unwrap_or_else(|e| abort_call_site!("discriminant_repr is i64, but discriminant_value is not an i64, this is not supported. {:?}", e)))
+                        .map_err(|e| (Span::call_site(), format!("discriminant_repr is i64, but discriminant_value is not an i64, this is not supported. {:?}", e))))
+                    .transpose()?
                     .unwrap_or_else(|| variant_index.try_into().expect("too many variants!"));
                 (quote! { #i }, i.to_string())
             }
             DiscriminantRepr::Bool => {
-                let b: bool = discriminant_value
+                let option_b: Option<bool> = discriminant_value
                     .as_deref()
-                    .map(|s| s
+                    .map(|s| -> Result<bool, _> { s
                         .parse()
-                        .unwrap_or_else(|e| abort_call_site!("discriminant_repr is bool, but discriminant_value is not a bool, this is not supported. {:?}", e)))
-                    .unwrap_or_else(|| match variant_index {
-                        0 => Some(false),
-                        1 => Some(true),
-                        _ => None,
-                    }.unwrap_or_else(|| abort_call_site!("only two variants are supported with discriminant_repr = \"bool\"")));
+                        .map_err(|e|
+                            (Span::call_site(), format!("discriminant_repr is bool, but discriminant_value is not a bool, this is not supported. {:?}", e))
+                        )
+                    })
+                    .transpose()?;
+                let b = match option_b {
+                    Some(b) => b,
+                    None => {
+                        let option_b = match variant_index {
+                            0 => Some(false),
+                            1 => Some(true),
+                            _ => None,
+                        };
+                        option_b.ok_or_else(|| (Span::call_site(), String::from("only two variants are supported with discriminant_repr = \"bool\"")))?
+                    }
+                };
                 (quote! { #b }, b.to_string())
             }
             DiscriminantRepr::Enum | DiscriminantRepr::EnumStr => {
@@ -861,7 +897,7 @@ impl<'a> VariantComputedData<'a> {
                 ),
             ),
         };
-        let compute_struct_variant = |fields: Punctuated<Field, Comma>| {
+        let compute_struct_variant = |fields: Punctuated<Field, Token!(,)>| {
             let mut enum_field_tokens = fields
                 .iter()
                 .map(|f| {
@@ -896,7 +932,7 @@ impl<'a> VariantComputedData<'a> {
             Fields::Named(named) => (compute_struct_variant)(named.named.clone()),
             Fields::Unit => {
                 if DiscriminantRepr::None == repr {
-                    abort!(variant.ident.span(), "discriminant_repr = \"none\" cannot be used with a unit variant. You must add fields.")
+                    return Err((variant.ident.span(), String::from("discriminant_repr = \"none\" cannot be used with a unit variant. You must add fields.")));
                 }
                 (compute_struct_variant)(Punctuated::new())
             }
@@ -904,14 +940,14 @@ impl<'a> VariantComputedData<'a> {
                 types: unnamed.unnamed.iter().map(|f| f.ty.clone()).collect(),
             },
         };
-        Self {
+        Ok(Self {
             variant,
             const_ident,
             const_value,
             const_value_ts,
             discriminant_value,
             data,
-        }
+        })
     }
 }
 
@@ -926,7 +962,7 @@ enum DiscriminantRepr {
 }
 
 struct Args {
-    items: Punctuated<MetaNameValue, Comma>,
+    items: Punctuated<MetaNameValue, Token!(,)>,
 }
 
 impl Parse for Args {
@@ -1092,6 +1128,259 @@ pub fn string_enum(_attr_input: TokenStream, item: TokenStream) -> TokenStream {
             ::napi::bindgen_prelude::register_module_export(None, concat!(stringify!(#enum_ident), "\0"), #cb_name);
         }
     }.into()
+}
+
+#[proc_macro]
+#[proc_macro_error::proc_macro_error]
+pub fn literal_typed_struct(item: TokenStream) -> TokenStream {
+    let input_data = syn::parse::<FieldDescriptors>(item)
+        .unwrap_or_else(|e| abort_call_site!("Failed to parse literal_typed_struct input {:?}", e));
+    let name = input_data.struct_ident;
+    let mod_name = format_ident!(
+        "__enunion_literal_struct_{}",
+        &heck::AsSnekCase(&name.to_string()).to_string()
+    );
+    let fd_data = {
+        let mut errs = Vec::new();
+        let mut variants = Vec::new();
+        let iter = input_data
+            .values
+            .iter()
+            .map(FieldDescriptorData::new)
+            .map(|r| match r {
+                Ok(v) => variants.push(v),
+                Err(e) => errs.push(e),
+            });
+        for _ in iter {}
+        if !errs.is_empty() {
+            let mut errs = errs.into_iter().flatten().peekable();
+            while let Some(err) = errs.next() {
+                if errs.peek().is_some() {
+                    emit_error!(err.0, "{}", err.1);
+                } else {
+                    abort!(err.0, "{}", err.1);
+                }
+            }
+            unreachable!()
+        } else {
+            variants
+        }
+    };
+    let fields = fd_data.iter().map(|a| {
+        let ts_type = LitStr::new(&a.value_ts, Span::call_site());
+        Field {
+            attrs: vec![Attribute {
+                pound_token: Pound {
+                    spans: [Span::call_site()],
+                },
+                style: AttrStyle::Outer,
+                bracket_token: Bracket {
+                    span: Span::call_site(),
+                },
+                path: Path {
+                    leading_colon: None,
+                    segments: Punctuated::from_iter(Some(PathSegment {
+                        ident: Ident::new("napi", Span::call_site()),
+                        arguments: PathArguments::None,
+                    })),
+                },
+                tokens: quote! { (ts_type = #ts_type) },
+            }],
+            vis: VisPublic {
+                pub_token: Pub {
+                    span: Span::call_site(),
+                },
+            }
+            .into(),
+            ident: Some(a.desc.ident.clone()),
+            colon_token: Some(a.desc.colon),
+            ty: a.desc.ty.clone(),
+        }
+    });
+    let js_names = fd_data
+        .iter()
+        .map(|fd| {
+            LitStr::new(
+                &heck::AsLowerCamelCase(fd.desc.ident.to_string()).to_string(),
+                Span::call_site(),
+            )
+        })
+        .collect::<Vec<_>>();
+    let consts = fd_data.iter().map(|fd| &fd.desc.value).collect::<Vec<_>>();
+    let types = fd_data.iter().map(|fd| &fd.desc.ty);
+    quote! {
+        pub struct #name;
+
+        impl ::napi::bindgen_prelude::FromNapiValue for #name {
+            unsafe fn from_napi_value(__enunion_env: ::napi::sys::napi_env, __enunion_napi_val: ::napi::sys::napi_value) -> ::napi::bindgen_prelude::Result<Self> {
+                let o = <::napi::JsObject as ::napi::bindgen_prelude::FromNapiValue>::from_napi_value(__enunion_env, __enunion_napi_val)?;
+                #(
+                    match o.get::<_, #types>(#js_names)? {
+                        Some(value) => {
+                            if !matches!(#consts, value) {
+                                return Err(::napi::Error::from_reason(format!("Value \"{}\" was found, but it wasn't equal to \"{}\"", #js_names, #consts)));
+                            }
+                        }
+                        None => {
+                            return Err(::napi::Error::from_reason(format!("Value \"{}\" was undefined or null.", #js_names)));
+                        }
+                    }
+                )*
+                Ok(Self)
+            }
+        }
+
+        impl ::napi::bindgen_prelude::ToNapiValue for #name {
+            unsafe fn to_napi_value(__enunion_env: ::napi::sys::napi_env, val: Self) -> ::napi::bindgen_prelude::Result<::napi::sys::napi_value> {
+                let env = unsafe { ::napi::Env::from_raw(__enunion_env) };
+                let mut new_object = env.create_object()?;
+                #(
+                    new_object.set(#js_names, #consts)?;
+                )*
+                Ok(<::napi::JsObject as ::napi::NapiRaw>::raw(&new_object))
+            }
+        }
+
+        #[doc(hidden)]
+        mod #mod_name {
+            use super::*;
+
+            #[::napi_derive::napi(object)]
+            pub struct #name {
+                #(
+                    #fields,
+                )*
+            }
+        }
+    }.into()
+}
+
+struct FieldDescriptorData<'a> {
+    pub desc: &'a FieldDescriptor,
+    pub value_ts: String,
+}
+
+#[derive(Copy, Clone, Eq, PartialEq)]
+enum FieldDescriptorType {
+    Bool,
+    I64,
+    String,
+    Enum,
+}
+
+impl<'a> FieldDescriptorData<'a> {
+    pub fn new(desc: &'a FieldDescriptor) -> Result<Self, Vec<(Span, String)>> {
+        let mut enum_name = None;
+        let repr = match &desc.ty {
+            Type::Path(TypePath {qself: _qself, path}) => {
+                let ident = path.get_ident().map(|i| i.to_string());
+                match ident.as_deref() {
+                    Some("bool") => FieldDescriptorType::Bool,
+                    Some("i64") => FieldDescriptorType::I64,
+                    Some("String") => FieldDescriptorType::String,
+                    _ => {
+                        enum_name = path.segments.last();
+                        FieldDescriptorType::Enum
+                    }
+                }
+            }
+            _ => return Err(vec![(Span::call_site(), String::from("literal_typed_struct only supports bool, i64, String, and enums in the type position."))])
+        };
+        let value_ts = match (repr, &desc.value) {
+            (
+                FieldDescriptorType::Bool,
+                Expr::Lit(ExprLit {
+                    lit: Lit::Bool(lit),
+                    ..
+                }),
+            ) => lit.value.to_string(),
+            (FieldDescriptorType::Bool, _) => {
+                return Err(vec![(desc.value.span(), String::from("bool type requested, but constant was not a bool. Please provide true or false."))]);
+            }
+            (
+                FieldDescriptorType::I64,
+                Expr::Lit(ExprLit {
+                    lit: Lit::Int(lit), ..
+                }),
+            ) => {
+                if let Err(e) = str::parse::<i64>(lit.base10_digits()) {
+                    return Err(vec![(
+                        desc.value.span(),
+                        format!("Provided integer could not be parsed as an i64 {:?}", e),
+                    )]);
+                }
+                lit.base10_digits().to_string()
+            }
+            (FieldDescriptorType::I64, _) => {
+                return Err(vec![(
+                    desc.value.span(),
+                    String::from("i64 type requested, but constant was not an i64. Please provide an integer.")
+                )]);
+            }
+            (
+                FieldDescriptorType::String,
+                Expr::Lit(ExprLit {
+                    lit: Lit::Str(lit), ..
+                }),
+            ) => {
+                format!("\"{}\"", lit.value())
+            }
+            (FieldDescriptorType::String, _) => {
+                return Err(vec![(desc.value.span(), String::from("String type requested, but value provided was not a string literal. Tip: Do not call String::from on a string literal, just provide the string literal."))]);
+            }
+            (FieldDescriptorType::Enum, Expr::Path(ExprPath { path, .. })) => {
+                let enum_variant = path.segments.last().unwrap();
+                format!("{}.{}", enum_name.unwrap().ident, enum_variant.ident)
+            }
+            (FieldDescriptorType::Enum, _) => {
+                return Err(vec![
+                    (desc.ty.span(), String::from("Interpreting this type as an enum because it wasn't one of these types: bool, i64, String")),
+                    (desc.value.span(), String::from("This is not an enum value"))
+                ]);
+            }
+        };
+        Ok(Self { desc, value_ts })
+    }
+}
+
+struct FieldDescriptor {
+    pub ident: Ident,
+    pub colon: Token!(:),
+    pub ty: Type,
+    pub value: Expr,
+}
+
+impl Parse for FieldDescriptor {
+    fn parse(input: ParseStream) -> syn::Result<Self> {
+        let ident = input.parse()?;
+        let colon = input.parse()?;
+        let ty = input.parse()?;
+        let _: Token!(=) = input.parse()?;
+        let value = input.parse()?;
+        Ok(Self {
+            ident,
+            colon,
+            ty,
+            value,
+        })
+    }
+}
+
+struct FieldDescriptors {
+    struct_ident: Ident,
+    values: Punctuated<FieldDescriptor, Token!(,)>,
+}
+
+impl Parse for FieldDescriptors {
+    fn parse(input: ParseStream) -> syn::Result<Self> {
+        let struct_ident = Ident::parse(input)?;
+        let _ = Comma::parse(input)?;
+        let values = Punctuated::<_, _>::parse_terminated(input)?;
+        Ok(Self {
+            struct_ident,
+            values,
+        })
+    }
 }
 
 fn gen_ts_folder() -> PathBuf {
