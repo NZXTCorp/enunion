@@ -23,6 +23,7 @@ import {
   takeLiteralDiscriminatedEnunion1,
   takeLiteralDiscriminatedEnunion2,
   takeLiteralDiscriminatedEnunion3,
+  takeLiteralDiscriminatedEnunion4,
   takeLiteralStructs,
   takeStringTest,
 } from "../index";
@@ -140,4 +141,11 @@ it("check Serialization and Deserialization of LiteralDiscriminated", () => {
   });
   expect(l3.foo).toBe(StringTest.Zoom);
   expect(l3.bar).toBe(StringTest.Bar);
+
+  let l4 = takeLiteralDiscriminatedEnunion4({
+    foo: 3,
+    bar: true,
+  });
+  expect(l4.foo).toBe(3);
+  expect(l4.bar).toBe(true);
 })

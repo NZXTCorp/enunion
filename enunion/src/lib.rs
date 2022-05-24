@@ -1207,7 +1207,17 @@ pub fn literal_typed_struct(item: TokenStream) -> TokenStream {
         })
         .collect::<Vec<_>>();
     let consts = fd_data.iter().map(|fd| &fd.desc.value).collect::<Vec<_>>();
-    let types = fd_data.iter().map(|fd| &fd.desc.ty);
+    let get_field = fd_data.iter().zip(js_names.iter()).map(|(fd, js_name)| {
+        let ty = &fd.desc.ty;
+        match fd.repr {
+            FieldDescriptorType::String => quote! {
+                o.get::<_, #ty>(#js_name)?.as_deref()
+            },
+            _ => quote! {
+                o.get::<_, #ty>(#js_name)?
+            },
+        }
+    });
     quote! {
         pub struct #name;
 
@@ -1215,9 +1225,9 @@ pub fn literal_typed_struct(item: TokenStream) -> TokenStream {
             unsafe fn from_napi_value(__enunion_env: ::napi::sys::napi_env, __enunion_napi_val: ::napi::sys::napi_value) -> ::napi::bindgen_prelude::Result<Self> {
                 let o = <::napi::JsObject as ::napi::bindgen_prelude::FromNapiValue>::from_napi_value(__enunion_env, __enunion_napi_val)?;
                 #(
-                    match o.get::<_, #types>(#js_names)? {
+                    match #get_field {
                         Some(value) => {
-                            if !matches!(#consts, value) {
+                            if !matches!(value, #consts) {
                                 return Err(::napi::Error::from_reason(format!("Value \"{}\" was found, but it wasn't equal to \"{}\"", #js_names, #consts)));
                             }
                         }
@@ -1257,6 +1267,7 @@ pub fn literal_typed_struct(item: TokenStream) -> TokenStream {
 
 struct FieldDescriptorData<'a> {
     pub desc: &'a FieldDescriptor,
+    pub repr: FieldDescriptorType,
     pub value_ts: String,
 }
 
@@ -1339,7 +1350,11 @@ impl<'a> FieldDescriptorData<'a> {
                 ]);
             }
         };
-        Ok(Self { desc, value_ts })
+        Ok(Self {
+            desc,
+            repr,
+            value_ts,
+        })
     }
 }
 

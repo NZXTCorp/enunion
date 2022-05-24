@@ -255,6 +255,7 @@ enunion::literal_typed_struct!(
   foo: StringTest = StringTest::Zoom,
   bar: crate::StringTest = StringTest::Bar
 );
+enunion::literal_typed_struct!(LiteralTypedStruct4, foo: i64 = 3, bar: bool = true);
 
 #[napi]
 pub fn take_literal_structs(_l: LiteralTypedStruct) -> LiteralTypedStruct2 {
@@ -266,6 +267,7 @@ pub enum LiteralDiscriminated {
   One(LiteralTypedStruct),
   Two(LiteralTypedStruct2),
   Three(LiteralTypedStruct3),
+  Four(LiteralTypedStruct4),
 }
 
 #[napi]
@@ -284,4 +286,10 @@ pub fn take_literal_discriminated_enunion_2(l: LiteralDiscriminated) -> LiteralD
 pub fn take_literal_discriminated_enunion_3(l: LiteralDiscriminated) -> LiteralDiscriminated {
   assert!(matches!(l, LiteralDiscriminated::Three(_)));
   LiteralDiscriminated::Three(LiteralTypedStruct3)
+}
+
+#[napi]
+pub fn take_literal_discriminated_enunion_4(l: LiteralDiscriminated) -> LiteralDiscriminated {
+  assert!(matches!(l, LiteralDiscriminated::Four(_)));
+  LiteralDiscriminated::Four(LiteralTypedStruct4)
 }
