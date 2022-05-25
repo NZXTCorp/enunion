@@ -115,10 +115,19 @@ pub enum DefaultFoo {
 }
 
 #[enunion::string_enum]
+#[derive(Debug)]
 pub enum StringTest {
   Bar = "bar",
   Baz = "baz",
   Zoom,
+}
+
+#[enunion::string_enum]
+#[derive(Debug)]
+pub enum StringTest2 {
+  Zoomier,
+  Zoomin,
+  Zoomiest,
 }
 
 #[napi(object)]
@@ -256,6 +265,15 @@ enunion::literal_typed_struct!(
   bar: crate::StringTest = StringTest::Bar
 );
 enunion::literal_typed_struct!(LiteralTypedStruct4, foo: i64 = 3, bar: bool = true);
+
+#[enunion::enunion(discriminant_repr = "none")]
+#[derive(Debug)]
+pub enum UnionOfStringEnums {
+  StringTest(StringTest),
+  StringTest2(StringTest2),
+}
+
+enunion::literal_typed_struct!(NowWithUnionOfStringEnums, foo: UnionOfStringEnums = UnionOfStringEnums::StringTest(StringTest::Bar));
 
 #[napi]
 pub fn take_literal_structs(_l: LiteralTypedStruct) -> LiteralTypedStruct2 {

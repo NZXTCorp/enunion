@@ -3,20 +3,24 @@ use proc_macro::TokenStream;
 use proc_macro2::Span;
 use proc_macro_error::{abort, abort_call_site, emit_error};
 use quote::{format_ident, quote, ToTokens};
+use std::borrow::Cow;
 use std::env::var;
 use std::fmt::Write as _;
 use std::fs::{create_dir_all, File};
 use std::io::Write;
 use std::path::PathBuf;
-use syn::token::{Bracket, Pound};
+use syn::token::{And, Bracket, Pound};
 use syn::{
     parse::{Parse, ParseStream},
     punctuated::Punctuated,
     spanned::Spanned,
     token::{Brace, Comma, Pub},
-    AttrStyle, Attribute, Expr, ExprLit, ExprPath, Field, Fields, Ident, ItemEnum, Lit, LitStr,
-    MetaNameValue, Path, PathArguments, PathSegment, Token, Type, TypePath, Variant, VisPublic,
+    AttrStyle, Attribute, Expr, ExprCall, ExprLit, ExprPath, Field, Fields, Ident, ItemEnum,
+    Lifetime, Lit, LitStr, MetaNameValue, Path, PathArguments, PathSegment, Token, Type, TypePath,
+    TypeReference, Variant, VisPublic,
 };
+
+type ProcMacroErrors = Vec<(Span, String)>;
 
 const SUPPORTED_REPR_TYPES: &str =
     "\"i64\", \"enum\", \"enum_str\", \"none\", \"str\", or \"bool\"";
@@ -1218,6 +1222,32 @@ pub fn literal_typed_struct(item: TokenStream) -> TokenStream {
             },
         }
     });
+    let field_values = fd_data.iter().map(|fd| {
+        let const_name = format_ident!(
+            "{}",
+            heck::AsShoutySnekCase(&fd.desc.ident.to_string()).to_string()
+        );
+        // This mess of code uses the given type, unless the representation is `String`, in which
+        // case it uses &'static str instead.
+        let const_type = match &fd.repr {
+            FieldDescriptorType::String => Cow::Owned(Type::Reference(TypeReference {
+                and_token: And {
+                    spans: [Span::call_site()],
+                },
+                lifetime: Some(Lifetime::new("'static", Span::call_site())),
+                mutability: None,
+                elem: Box::new(Type::Path(TypePath {
+                    qself: None,
+                    path: Path::from(PathSegment::from(Ident::new("str", Span::call_site()))),
+                })),
+            })),
+            _ => Cow::Borrowed(&fd.desc.ty),
+        };
+        let const_value = &fd.desc.value;
+        quote! {
+            pub const #const_name: #const_type = #const_value;
+        }
+    });
     quote! {
         pub struct #name;
 
@@ -1228,7 +1258,7 @@ pub fn literal_typed_struct(item: TokenStream) -> TokenStream {
                     match #get_field {
                         Some(value) => {
                             if !matches!(value, #consts) {
-                                return Err(::napi::Error::from_reason(format!("Value \"{}\" was found, but it wasn't equal to \"{}\"", #js_names, #consts)));
+                                return Err(::napi::Error::from_reason(format!("Value \"{}\" was found, but it wasn't equal to \"{:?}\"", #js_names, #consts)));
                             }
                         }
                         None => {
@@ -1249,6 +1279,10 @@ pub fn literal_typed_struct(item: TokenStream) -> TokenStream {
                 )*
                 Ok(<::napi::JsObject as ::napi::NapiRaw>::raw(&new_object))
             }
+        }
+
+        impl #name {
+            #(#field_values)*
         }
 
         #[doc(hidden)]
@@ -1279,10 +1313,10 @@ enum FieldDescriptorType {
     Enum,
 }
 
-impl<'a> FieldDescriptorData<'a> {
-    pub fn new(desc: &'a FieldDescriptor) -> Result<Self, Vec<(Span, String)>> {
+impl FieldDescriptorType {
+    pub fn from_type(ty: &Type) -> Result<(Self, Option<PathSegment>), ProcMacroErrors> {
         let mut enum_name = None;
-        let repr = match &desc.ty {
+        let ret = match ty {
             Type::Path(TypePath {qself: _qself, path}) => {
                 let ident = path.get_ident().map(|i| i.to_string());
                 match ident.as_deref() {
@@ -1290,72 +1324,177 @@ impl<'a> FieldDescriptorData<'a> {
                     Some("i64") => FieldDescriptorType::I64,
                     Some("String") => FieldDescriptorType::String,
                     _ => {
-                        enum_name = path.segments.last();
+                        enum_name = path.segments.last().cloned();
                         FieldDescriptorType::Enum
                     }
                 }
             }
             _ => return Err(vec![(Span::call_site(), String::from("literal_typed_struct only supports bool, i64, String, and enums in the type position."))])
         };
-        let value_ts = match (repr, &desc.value) {
-            (
-                FieldDescriptorType::Bool,
-                Expr::Lit(ExprLit {
-                    lit: Lit::Bool(lit),
-                    ..
-                }),
-            ) => lit.value.to_string(),
-            (FieldDescriptorType::Bool, _) => {
-                return Err(vec![(desc.value.span(), String::from("bool type requested, but constant was not a bool. Please provide true or false."))]);
-            }
-            (
-                FieldDescriptorType::I64,
-                Expr::Lit(ExprLit {
-                    lit: Lit::Int(lit), ..
-                }),
-            ) => {
-                if let Err(e) = str::parse::<i64>(lit.base10_digits()) {
-                    return Err(vec![(
-                        desc.value.span(),
-                        format!("Provided integer could not be parsed as an i64 {:?}", e),
-                    )]);
-                }
-                lit.base10_digits().to_string()
-            }
-            (FieldDescriptorType::I64, _) => {
-                return Err(vec![(
-                    desc.value.span(),
-                    String::from("i64 type requested, but constant was not an i64. Please provide an integer.")
-                )]);
-            }
-            (
-                FieldDescriptorType::String,
-                Expr::Lit(ExprLit {
-                    lit: Lit::Str(lit), ..
-                }),
-            ) => {
-                format!("\"{}\"", lit.value())
-            }
-            (FieldDescriptorType::String, _) => {
-                return Err(vec![(desc.value.span(), String::from("String type requested, but value provided was not a string literal. Tip: Do not call String::from on a string literal, just provide the string literal."))]);
-            }
-            (FieldDescriptorType::Enum, Expr::Path(ExprPath { path, .. })) => {
-                let enum_variant = path.segments.last().unwrap();
-                format!("{}.{}", enum_name.unwrap().ident, enum_variant.ident)
-            }
-            (FieldDescriptorType::Enum, _) => {
-                return Err(vec![
-                    (desc.ty.span(), String::from("Interpreting this type as an enum because it wasn't one of these types: bool, i64, String")),
-                    (desc.value.span(), String::from("This is not an enum value"))
-                ]);
-            }
-        };
+        Ok((ret, enum_name))
+    }
+
+    pub fn infer_from_expr(e: &Expr) -> Result<Self, ProcMacroErrors> {
+        match e {
+            Expr::Lit(ExprLit { lit, .. }) => match lit {
+                Lit::Str(_) => Ok(Self::String),
+                Lit::Int(_) => Ok(Self::I64),
+                Lit::Bool(_) => Ok(Self::Bool),
+                _ => Err(vec![(
+                    e.span(),
+                    format!("unsupported literal type {:?}", lit),
+                )]),
+            },
+            Expr::Path(_) | Expr::Call(_) => Ok(Self::Enum),
+            _ => Err(vec![(
+                e.span(),
+                String::from("Enunion was unable to infer the type of this expression"),
+            )]),
+        }
+    }
+}
+
+impl<'a> FieldDescriptorData<'a> {
+    pub fn new(desc: &'a FieldDescriptor) -> Result<Self, ProcMacroErrors> {
+        let (repr, enum_name) = FieldDescriptorType::from_type(&desc.ty)?;
+        let value_ts = ts_value(repr, &desc.ty, &desc.value, enum_name)?;
         Ok(Self {
             desc,
             repr,
             value_ts,
         })
     }
+}
+
+fn ts_value(
+    repr: FieldDescriptorType,
+    ty: &Type,
+    value: &Expr,
+    enum_name: Option<PathSegment>,
+) -> Result<String, ProcMacroErrors> {
+    let ret = match (repr, value) {
+        (
+            FieldDescriptorType::Bool,
+            Expr::Lit(ExprLit {
+                lit: Lit::Bool(lit),
+                ..
+            }),
+        ) => lit.value.to_string(),
+        (FieldDescriptorType::Bool, _) => {
+            return Err(vec![(value.span(), String::from("bool type requested, but constant was not a bool. Please provide true or false."))]);
+        }
+        (
+            FieldDescriptorType::I64,
+            Expr::Lit(ExprLit {
+                lit: Lit::Int(lit), ..
+            }),
+        ) => {
+            if let Err(e) = str::parse::<i64>(lit.base10_digits()) {
+                return Err(vec![(
+                    value.span(),
+                    format!("Provided integer could not be parsed as an i64 {:?}", e),
+                )]);
+            }
+            lit.base10_digits().to_string()
+        }
+        (FieldDescriptorType::I64, _) => {
+            return Err(vec![(
+                value.span(),
+                String::from(
+                    "i64 type requested, but constant was not an i64. Please provide an integer.",
+                ),
+            )]);
+        }
+        (
+            FieldDescriptorType::String,
+            Expr::Lit(ExprLit {
+                lit: Lit::Str(lit), ..
+            }),
+        ) => {
+            format!("\"{}\"", lit.value())
+        }
+        (FieldDescriptorType::String, _) => {
+            return Err(vec![(value.span(), String::from("String type requested, but value provided was not a string literal. Tip: Do not call String::from on a string literal, just provide the string literal."))]);
+        }
+        (FieldDescriptorType::Enum, Expr::Path(ExprPath { path, .. })) => {
+            let enum_variant = path.segments.last().unwrap();
+            format!("{}.{}", enum_name.unwrap().ident, enum_variant.ident)
+        }
+        // Support transparent enunion variants
+        (FieldDescriptorType::Enum, Expr::Call(ExprCall { args, .. })) => {
+            if args.len() == 1 {
+                let inner_field_type = FieldDescriptorType::infer_from_expr(&args[0])?;
+                let inner_type = match inner_field_type {
+                    FieldDescriptorType::Enum => {
+                        let path = match &args[0] {
+                            Expr::Path(ExprPath { path, .. }) => path,
+                            Expr::Call(ExprCall { func, .. }) => match &**func {
+                                Expr::Path(ExprPath { path, .. }) => path,
+                                _ => {
+                                    return Err(vec![(
+                                        args.span(),
+                                        String::from("This type is not supported in this context"),
+                                    )])
+                                }
+                            },
+                            _ => {
+                                return Err(vec![(
+                                    args.span(),
+                                    String::from("This type is not supported in this context"),
+                                )])
+                            }
+                        };
+                        if path.segments.len() < 2 {
+                            return Err(vec![(
+                                args.span(),
+                                String::from("Unable to determine the type of this enum"),
+                            )]);
+                        }
+                        Path {
+                            leading_colon: path.leading_colon,
+                            segments: path
+                                .segments
+                                .iter()
+                                .take(path.segments.len() - 1)
+                                .cloned()
+                                .collect(),
+                        }
+                    }
+                    _ => {
+                        let ident = match inner_field_type {
+                            FieldDescriptorType::Bool => "bool",
+                            FieldDescriptorType::I64 => "i64",
+                            FieldDescriptorType::String => "String",
+                            FieldDescriptorType::Enum => unreachable!(),
+                        };
+                        Path::from(PathSegment {
+                            ident: Ident::new(ident, Span::call_site()),
+                            arguments: PathArguments::None,
+                        })
+                    }
+                };
+                let enum_name = inner_type.segments.last().cloned();
+                return ts_value(
+                    inner_field_type,
+                    &Type::Path(TypePath {
+                        qself: None,
+                        path: inner_type,
+                    }),
+                    &args[0],
+                    enum_name,
+                );
+            } else {
+                return Err(vec![(args.span(), String::from("enunion only supports enum variants with one unnamed field in this context."))]);
+            }
+        }
+        (FieldDescriptorType::Enum, _) => {
+            return Err(vec![
+                (ty.span(), String::from("Interpreting this type as an enum because it wasn't one of these types: bool, i64, String")),
+                (value.span(), String::from("This is not a supported enum value"))
+            ]);
+        }
+    };
+    Ok(ret)
 }
 
 struct FieldDescriptor {
