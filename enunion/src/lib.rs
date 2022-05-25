@@ -20,6 +20,8 @@ use syn::{
     TypeReference, Variant, VisPublic,
 };
 
+use convert_case::{Case, Casing};
+
 type ProcMacroErrors = Vec<(Span, String)>;
 
 const SUPPORTED_REPR_TYPES: &str =
@@ -166,10 +168,10 @@ pub fn enunion(attr_input: TokenStream, item: TokenStream) -> TokenStream {
     let discriminant_field_name = discriminant_field_name
         .map(|n| Ident::new(&n, Span::call_site()))
         .unwrap_or_else(|| {
-            format_ident!("{}_type", heck::AsSnekCase(e.ident.to_string()).to_string())
+            format_ident!("{}_type", e.ident.to_string().to_case(Case::Snake))
         });
     let discriminant_field_name_js_case = LitStr::new(
-        &heck::AsLowerCamelCase(discriminant_field_name.to_string()).to_string(),
+        &discriminant_field_name.to_string().to_case(Case::Camel),
         Span::call_site(),
     );
     let repr = repr.unwrap_or(DiscriminantRepr::I64);
@@ -247,18 +249,18 @@ pub fn enunion(attr_input: TokenStream, item: TokenStream) -> TokenStream {
     }
     let mod_ident = format_ident!(
         "__enunion_{}",
-        heck::AsSnekCase(e.ident.to_string()).to_string()
+        e.ident.to_string().to_case(Case::Snake)
     );
     let init_fn_idents = variants.iter().map(|v| {
         format_ident!(
             "____napi_register__enunion_{}",
-            heck::AsSnekCase(v.variant.ident.to_string()).to_string()
+            v.variant.ident.to_string().to_case(Case::Snake)
         )
     });
     let cb_names = variants.iter().map(|v| {
         format_ident!(
             "__enunion_callback_{}",
-            heck::AsSnekCase(v.variant.ident.to_string()).to_string()
+            v.variant.ident.to_string().to_case(Case::Snake)
         )
     });
     let enum_ident = &e.ident;
@@ -380,7 +382,7 @@ pub fn enunion(attr_input: TokenStream, item: TokenStream) -> TokenStream {
                 .map(|f| {
                     format_ident!(
                         "{}",
-                        heck::AsLowerCamelCase(f.ident.as_ref().unwrap().to_string()).to_string()
+                        f.ident.as_ref().unwrap().to_string().to_case(Case::Camel)
                     )
                 })
                 .collect::<Vec<_>>()
@@ -807,8 +809,8 @@ impl<'a> VariantComputedData<'a> {
         }
         let const_ident = format_ident!(
             "{}_TYPE_{}",
-            heck::AsShoutySnekCase(enum_ident.to_string()).to_string(),
-            heck::AsShoutySnekCase(variant.ident.to_string()).to_string()
+            enum_ident.to_string().to_case(Case::UpperSnake),
+            variant.ident.to_string().to_case(Case::UpperSnake)
         );
         let variant_args = variant
             .attrs
@@ -1053,11 +1055,11 @@ pub fn string_enum(_attr_input: TokenStream, item: TokenStream) -> TokenStream {
     }
     let init_fn_ident = format_ident!(
         "____napi_register__enunion_{}",
-        heck::AsSnekCase(enum_ident.to_string()).to_string()
+        enum_ident.to_string().to_case(Case::Snake)
     );
     let cb_name = format_ident!(
         "__enunion_callback_{}",
-        heck::AsSnekCase(enum_ident.to_string()).to_string()
+        enum_ident.to_string().to_case(Case::Snake)
     );
     quote! {
         #altered_e
@@ -1142,7 +1144,7 @@ pub fn literal_typed_struct(item: TokenStream) -> TokenStream {
     let name = input_data.struct_ident;
     let mod_name = format_ident!(
         "__enunion_literal_struct_{}",
-        &heck::AsSnekCase(&name.to_string()).to_string()
+        &&name.to_string().to_case(Case::Snake)
     );
     let fd_data = {
         let mut errs = Vec::new();
@@ -1205,7 +1207,7 @@ pub fn literal_typed_struct(item: TokenStream) -> TokenStream {
         .iter()
         .map(|fd| {
             LitStr::new(
-                &heck::AsLowerCamelCase(fd.desc.ident.to_string()).to_string(),
+                &fd.desc.ident.to_string().to_case(Case::Camel),
                 Span::call_site(),
             )
         })
@@ -1225,7 +1227,7 @@ pub fn literal_typed_struct(item: TokenStream) -> TokenStream {
     let field_values = fd_data.iter().map(|fd| {
         let const_name = format_ident!(
             "{}",
-            heck::AsShoutySnekCase(&fd.desc.ident.to_string()).to_string()
+            fd.desc.ident.to_string().to_case(Case::UpperSnake)
         );
         // This mess of code uses the given type, unless the representation is `String`, in which
         // case it uses &'static str instead.

@@ -27,7 +27,7 @@ checksum = "e78d4f1cc4ae33bbfc157ed5d5a5ef3bc29227303d595861deb238fcec4e9457"
 name = "enunion"
 version = "0.1.0"
 dependencies = [
- "heck",
+ "convert_case",
  "itertools",
  "napi-derive-backend",
  "proc-macro-error",
@@ -39,12 +39,6 @@ dependencies = [
 [[package]]
 name = "enunion-post-build"
 version = "0.1.0"
-
-[[package]]
-name = "heck"
-version = "0.4.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2540771e65fc8cb83cd6e8a237f70c319bd5c29f78ed1084ba5d50eeac86f7f9"
 
 [[package]]
 name = "itertools"
