@@ -4,7 +4,7 @@ use napi_derive::napi;
 pub enum Foo {
   UnionVariant(TestObject, TestObjectTwo),
   Bar,
-  #[enunion(discriminant_value = "4")]
+  #[enunion(discriminant_value = 4)]
   Baz {
     a: i32,
     b: u32,
@@ -16,9 +16,9 @@ pub enum Foo {
 
 #[enunion::enunion(discriminant_repr = "bool")]
 pub enum FooBool {
-  #[enunion(discriminant_value = "true")]
+  #[enunion(discriminant_value = true)]
   Bar,
-  #[enunion(discriminant_value = "false")]
+  #[enunion(discriminant_value = false)]
   Baz {
     a: i32,
     b: u32,

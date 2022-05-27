@@ -805,7 +805,7 @@ impl<'a> VariantComputedData<'a> {
         variant_index: usize,
     ) -> Result<Self, (Span, String)> {
         if variant.discriminant.is_some() {
-            return Err((Span::call_site(), format!("Please use #[enunion(discriminant_value = \"value\") to specify the discriminant value, the ` = value` style on {}::{} is not supported", enum_ident, variant.ident)));
+            return Err((variant.ident.span(), format!("Please use #[enunion(discriminant_value = \"value\") to specify the discriminant value, the ` = value` style on {}::{} is not supported", enum_ident, variant.ident)));
         }
         let const_ident = format_ident!(
             "{}_TYPE_{}",
@@ -833,6 +833,9 @@ impl<'a> VariantComputedData<'a> {
                         }
                         Lit::Int(i) => {
                             discriminant_value = Some(i.base10_digits().to_string());
+                        }
+                        Lit::Bool(b) => {
+                            discriminant_value = Some(b.value.to_string());
                         }
                         _ => {
                             return Err((Span::call_site(), format!("literal type provided for {} is not supported, please use a string or an integer.", variant.ident)));
