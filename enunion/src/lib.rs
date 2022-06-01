@@ -542,6 +542,16 @@ pub fn enunion(attr_input: TokenStream, item: TokenStream) -> TokenStream {
                     }
                 }
 
+                impl ::napi::bindgen_prelude::TypeName for super::#enum_ident {
+                    fn type_name() -> &'static str {
+                        stringify!(#enum_ident)
+                    }
+
+                    fn value_type() -> ::napi::bindgen_prelude::ValueType {
+                        ::napi::bindgen_prelude::ValueType::Unknown
+                    }
+                }
+
                 #discriminant_enum
 
                 #(
@@ -756,6 +766,16 @@ pub fn enunion(attr_input: TokenStream, item: TokenStream) -> TokenStream {
                         match val {
                             #into_arms
                         }
+                    }
+                }
+
+                impl ::napi::bindgen_prelude::TypeName for super::#enum_ident {
+                    fn type_name() -> &'static str {
+                        stringify!(#enum_ident)
+                    }
+
+                    fn value_type() -> ::napi::bindgen_prelude::ValueType {
+                        ::napi::bindgen_prelude::ValueType::Unknown
                     }
                 }
 
@@ -1080,6 +1100,16 @@ pub fn string_enum(_attr_input: TokenStream, item: TokenStream) -> TokenStream {
             }
         }
 
+        impl ::napi::bindgen_prelude::TypeName for #enum_ident {
+            fn type_name() -> &'static str {
+                stringify!(#enum_ident)
+            }
+
+            fn value_type() -> ::napi::bindgen_prelude::ValueType {
+                ::napi::bindgen_prelude::ValueType::String
+            }
+        }
+
         impl ::std::fmt::Display for #enum_ident {
             fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::result::Result<(), ::std::fmt::Error> {
                 write!(f, "{}", <Self as ::std::convert::AsRef<str>>::as_ref(self))
@@ -1275,6 +1305,16 @@ pub fn literal_typed_struct(item: TokenStream) -> TokenStream {
                     new_object.set(#js_names, #consts)?;
                 )*
                 Ok(<::napi::JsObject as ::napi::NapiRaw>::raw(&new_object))
+            }
+        }
+
+        impl ::napi::bindgen_prelude::TypeName for #name {
+            fn type_name() -> &'static str {
+                stringify!(#name)
+            }
+
+            fn value_type() -> ::napi::bindgen_prelude::ValueType {
+                ::napi::bindgen_prelude::ValueType::Object
             }
         }
 
