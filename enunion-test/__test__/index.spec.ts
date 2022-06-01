@@ -11,6 +11,7 @@ import {
   FooNoDiscriminant,
   StringTest,
   takeFoo,
+  takeFooKeywordFieldName,
   takeFooBool,
   takeFooDefault,
   takeFooEnum,
@@ -88,6 +89,23 @@ it("calls takeFoo", () => {
   });
   expect(r.fooType).toBe(FOO_TYPE_BAZ);
   if (r.fooType === FOO_TYPE_BAZ) {
+    expect(r.a).toBe(1);
+    expect(r.b).toBe(2);
+    expect(r.c).toBe("Hello from Rust");
+    expect(r.myMultiWordField).toBe(8);
+  }
+});
+
+it("calls takeFooKeywordFieldName", () => {
+  let r = takeFooKeywordFieldName({
+    a: 3,
+    b: 2,
+    c: "Hello from TypeScript",
+    myMultiWordField: 2,
+    type: FOO_TYPE_BAZ,
+  });
+  expect(r.type).toBe(FOO_TYPE_BAZ);
+  if (r.type === FOO_TYPE_BAZ) {
     expect(r.a).toBe(1);
     expect(r.b).toBe(2);
     expect(r.c).toBe("Hello from Rust");

@@ -166,14 +166,12 @@ pub fn enunion(attr_input: TokenStream, item: TokenStream) -> TokenStream {
         );
     }
     let discriminant_field_name = discriminant_field_name
-        .map(|n| Ident::new(&n, Span::call_site()))
-        .unwrap_or_else(|| {
-            format_ident!("{}_type", e.ident.to_string().to_case(Case::Snake))
-        });
+        .unwrap_or_else(|| format!("{}_type", e.ident.to_string().to_case(Case::Snake)));
     let discriminant_field_name_js_case = LitStr::new(
-        &discriminant_field_name.to_string().to_case(Case::Camel),
+        &discriminant_field_name.to_case(Case::Camel),
         Span::call_site(),
     );
+    let discriminant_field_name = format_ident!("r#{}", discriminant_field_name);
     let repr = repr.unwrap_or(DiscriminantRepr::I64);
     let mut discriminant_enum_ident = None;
     let (discriminant_type, discriminant_type_dynamic) = match repr {
@@ -247,10 +245,7 @@ pub fn enunion(attr_input: TokenStream, item: TokenStream) -> TokenStream {
             }
         }
     }
-    let mod_ident = format_ident!(
-        "__enunion_{}",
-        e.ident.to_string().to_case(Case::Snake)
-    );
+    let mod_ident = format_ident!("__enunion_{}", e.ident.to_string().to_case(Case::Snake));
     let init_fn_idents = variants.iter().map(|v| {
         format_ident!(
             "____napi_register__enunion_{}",
@@ -1228,10 +1223,7 @@ pub fn literal_typed_struct(item: TokenStream) -> TokenStream {
         }
     });
     let field_values = fd_data.iter().map(|fd| {
-        let const_name = format_ident!(
-            "{}",
-            fd.desc.ident.to_string().to_case(Case::UpperSnake)
-        );
+        let const_name = format_ident!("{}", fd.desc.ident.to_string().to_case(Case::UpperSnake));
         // This mess of code uses the given type, unless the representation is `String`, in which
         // case it uses &'static str instead.
         let const_type = match &fd.repr {

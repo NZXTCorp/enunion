@@ -14,6 +14,20 @@ pub enum Foo {
   UnionVariant2(TestObject, TestObjectTwo),
 }
 
+#[enunion::enunion(discriminant_repr = "i64", discriminant_field_name = "type")]
+pub enum FooWithKeywordFieldName {
+  UnionVariant(TestObject, TestObjectTwo),
+  Bar,
+  #[enunion(discriminant_value = 4)]
+  Baz {
+    a: i32,
+    b: u32,
+    c: String,
+    my_multi_word_field: i32,
+  },
+  UnionVariant2(TestObject, TestObjectTwo),
+}
+
 #[enunion::enunion(discriminant_repr = "bool")]
 pub enum FooBool {
   #[enunion(discriminant_value = true)]
@@ -219,6 +233,29 @@ pub fn take_foo(f: Foo) -> Foo {
     _ => unreachable!(),
   }
   Foo::Baz {
+    a: 1,
+    b: 2,
+    c: String::from("Hello from Rust"),
+    my_multi_word_field: 8,
+  }
+}
+
+#[napi]
+pub fn take_foo_keyword_field_name(f: FooWithKeywordFieldName) -> FooWithKeywordFieldName {
+  assert!(matches!(
+    f,
+    FooWithKeywordFieldName::Baz {
+      a: 3,
+      b: 2,
+      c: _,
+      my_multi_word_field: 2
+    }
+  ));
+  match f {
+    FooWithKeywordFieldName::Baz { c, .. } => assert_eq!(c, "Hello from TypeScript"),
+    _ => unreachable!(),
+  }
+  FooWithKeywordFieldName::Baz {
     a: 1,
     b: 2,
     c: String::from("Hello from Rust"),
