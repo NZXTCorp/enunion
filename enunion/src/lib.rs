@@ -1254,6 +1254,7 @@ pub fn literal_typed_struct(item: TokenStream) -> TokenStream {
     });
     let field_values = fd_data.iter().map(|fd| {
         let const_name = format_ident!("{}", fd.desc.ident.to_string().to_case(Case::UpperSnake));
+        let fn_name = &fd.desc.ident;
         // This mess of code uses the given type, unless the representation is `String`, in which
         // case it uses &'static str instead.
         let const_type = match &fd.repr {
@@ -1273,6 +1274,10 @@ pub fn literal_typed_struct(item: TokenStream) -> TokenStream {
         let const_value = &fd.desc.value;
         quote! {
             pub const #const_name: #const_type = #const_value;
+
+            pub const fn #fn_name(&self) -> #const_type {
+                Self::#const_name
+            }
         }
     });
     quote! {
