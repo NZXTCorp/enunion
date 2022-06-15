@@ -131,8 +131,10 @@ pub enum DefaultFoo {
 #[enunion::string_enum]
 #[derive(Debug)]
 pub enum StringTest {
-  Bar = "bar",
-  Baz = "baz",
+  #[string_enum(value = "bar")]
+  Bar,
+  #[string_enum(value = "baz")]
+  Baz,
   Zoom,
 }
 

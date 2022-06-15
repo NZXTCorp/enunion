@@ -106,7 +106,7 @@ const SUPPORTED_REPR_TYPES: &str =
 #[proc_macro_error::proc_macro_error]
 #[proc_macro_attribute]
 pub fn enunion(attr_input: TokenStream, item: TokenStream) -> TokenStream {
-    let attr: Args = syn::parse(attr_input).unwrap_or_else(|e| abort_call_site!("Failed to parse enunion input, please use field = \"value\" in a Token!(,) separated list. Check the documentation for examples. Error: {:?}", e));
+    let attr: Args = syn::parse(attr_input).unwrap_or_else(|e| abort_call_site!("Failed to parse enunion input, please use field = \"value\" in a comma separated list. Check the documentation for examples. Error: {:?}", e));
     let mut repr = None;
     let mut discriminant_field_name = None;
     for MetaNameValue { path, lit, .. } in attr.items.iter() {
@@ -349,7 +349,7 @@ pub fn enunion(attr_input: TokenStream, item: TokenStream) -> TokenStream {
             }
             .into();
         }
-        // The trailing Token!(,) is important, because we're adding one more field.
+        // The trailing comma is important, because we're adding one more field.
         if !pub_fields.empty_or_trailing() {
             pub_fields.push_punct(Comma {
                 spans: [Span::call_site()],
@@ -836,7 +836,7 @@ impl<'a> VariantComputedData<'a> {
                 .map(ToString::to_string)
                 .as_deref() == Some("enunion")
             )
-            .map(|a| a.parse_args::<Args>().map_err(|e| (Span::call_site(), format!("Failed to parse enunion variant `{}` attribute input, please use field = \"value\" in a Token!(,) separated list. Check the documentation for examples. Error: {:?}", variant.ident, e))))
+            .map(|a| a.parse_args::<Args>().map_err(|e| (Span::call_site(), format!("Failed to parse enunion variant `{}` attribute input, please use field = \"value\" in a comma separated list. Check the documentation for examples. Error: {:?}", variant.ident, e))))
             .transpose()?;
         let mut discriminant_value = None;
         if let Some(variant_args) = variant_args {
@@ -1004,23 +1004,39 @@ pub fn string_enum(_attr_input: TokenStream, item: TokenStream) -> TokenStream {
             e
         )
     });
-    let str_literals = e
-        .variants
-        .iter()
-        .map(|v| {
-            v.discriminant
-                .as_ref()
-                .map(|(_eq, d)| match d {
-                    Expr::Lit(ExprLit {
-                        lit: Lit::Str(s), ..
-                    }) => s.value(),
-                    _ => {
-                        abort_call_site!("string_enum only supports string literal discriminants!")
-                    }
-                })
-                .unwrap_or_else(|| v.ident.to_string())
-        })
-        .collect::<Vec<_>>();
+    let mut str_literals = Vec::new();
+    for v in e.variants.iter() {
+        let variant_args = v
+            .attrs
+            .iter()
+            .find(|a| a.path.get_ident().map(ToString::to_string).as_deref() == Some("string_enum"))
+            .map(|a| a.parse_args::<Args>())
+            .transpose();
+        let variant_args = match variant_args {
+            Ok(o) => o,
+            Err(e) => abort_call_site!("Failed to parse string_enum variant `{}` attribute input, please use field = \"value\" in a comma separated list. Check the documentation for examples. Error: {:?}", v.ident, e)
+        };
+        let mut value = None;
+        if let Some(variant_args) = variant_args {
+            for arg in variant_args.items {
+                match arg.path.get_ident().map(|i| i.to_string()).as_deref() {
+                    Some("value") => match arg.lit {
+                        Lit::Str(s) => {
+                            value = Some(s.value());
+                        }
+                        _ => {
+                            abort_call_site!("literal type provided for {} is not supported, please use a string.", v.ident);
+                        }
+                    },
+                    _ => abort_call_site!(
+                        "{} was not a recognized string_enum argument, please use `value`.",
+                        arg.path.to_token_stream()
+                    ),
+                }
+            }
+        }
+        str_literals.push(value.unwrap_or_else(|| v.ident.to_string()));
+    }
     let enum_ident = &e.ident;
     let variant_idents = e.variants.iter().map(|v| &v.ident).collect::<Vec<_>>();
     // This is the NAPI internal environment variable used to find the path to write TS definitions to. If it's set, then a new file is being generated.
@@ -1067,10 +1083,6 @@ pub fn string_enum(_attr_input: TokenStream, item: TokenStream) -> TokenStream {
         let mut js_f = File::create(&js_path).expect("Failed to open JS output file");
         js_f.write_all(js.as_bytes()).unwrap();
     }
-    let mut altered_e = e.clone();
-    for v in &mut altered_e.variants {
-        v.discriminant = None;
-    }
     let init_fn_ident = format_ident!(
         "____napi_register__enunion_{}",
         enum_ident.to_string().to_case(Case::Snake)
@@ -1079,8 +1091,20 @@ pub fn string_enum(_attr_input: TokenStream, item: TokenStream) -> TokenStream {
         "__enunion_callback_{}",
         enum_ident.to_string().to_case(Case::Snake)
     );
+    let mut e_altered = e.clone();
+    // remove the `string_enum` attributes from the resulting enum, they've been parsed.
+    for v in &mut e_altered.variants {
+        v.attrs.retain(|a| {
+            a.path
+                .segments
+                .last()
+                .map(|i| i.ident.to_string())
+                .as_deref()
+                != Some("string_enum")
+        });
+    }
     quote! {
-        #altered_e
+        #e_altered
 
         impl ::napi::bindgen_prelude::FromNapiValue for #enum_ident {
             unsafe fn from_napi_value(__enunion_env: ::napi::sys::napi_env, __enunion_napi_val: ::napi::sys::napi_value) -> ::napi::bindgen_prelude::Result<Self> {
