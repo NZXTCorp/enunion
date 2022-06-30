@@ -14,6 +14,20 @@ pub enum Foo {
   UnionVariant2(TestObject, TestObjectTwo),
 }
 
+#[enunion::enunion(discriminant_repr = "i64")]
+pub enum FooWithUPPERCASEName {
+  UnionVariant(TestObject, TestObjectTwo),
+  Bar,
+  #[enunion(discriminant_value = 4)]
+  Baz {
+    a: i32,
+    b: u32,
+    c: String,
+    my_multi_word_field: i32,
+  },
+  UnionVariant2(TestObject, TestObjectTwo),
+}
+
 #[enunion::enunion(discriminant_repr = "i64", discriminant_field_name = "type")]
 pub enum FooWithKeywordFieldName {
   UnionVariant(TestObject, TestObjectTwo),

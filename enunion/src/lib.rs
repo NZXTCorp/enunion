@@ -283,7 +283,7 @@ pub fn enunion(attr_input: TokenStream, item: TokenStream) -> TokenStream {
             "export type {} = {};",
             enum_ident,
             (struct_idents)()
-                .map(|s| s.to_string())
+                .map(|s| s.to_string().to_case(Case::Pascal))
                 .chain(
                     variants
                         .iter()
