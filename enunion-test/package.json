@@ -20,9 +20,8 @@
   },
   "scripts": {
     "artifacts": "napi artifacts",
-    "build": "napi build --platform --release",
-    "postbuild": "enunion-post-build",
-    "build:debug": "napi build --platform",
+    "build": "enapi build --platform --release --dts custom.d.ts",
+    "build:debug": "enapi build --platform",
     "prepublishOnly": "napi prepublish -t npm",
     "test": "cargo test && jest",
     "version": "napi version"
