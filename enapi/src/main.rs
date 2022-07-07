@@ -80,7 +80,8 @@ fn main() {
             writeln!(js, "// -- END ENUNION GENERATED CODE --").unwrap();
             out_js.as_mut().unwrap().write_all(js.as_bytes()).unwrap();
         }
+        println!("TypeScript files merged successfully!");
     }
     let _ = std::fs::remove_dir_all("enunion-generated-ts");
-    println!("TypeScript files merged successfully!");
+    std::process::exit(build_exit_status.code().unwrap_or(1));
 }
