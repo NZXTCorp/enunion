@@ -20,7 +20,7 @@
   },
   "scripts": {
     "artifacts": "napi artifacts",
-    "build": "enapi build --platform --release --dts custom.d.ts",
+    "build": "enapi build --platform --release",
     "build:debug": "enapi build --platform",
     "prepublishOnly": "napi prepublish -t npm",
     "test": "cargo test && jest",

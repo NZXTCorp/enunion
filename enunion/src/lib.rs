@@ -278,6 +278,26 @@ pub fn enunion(attr_input: TokenStream, item: TokenStream) -> TokenStream {
         create_dir_all(ts_path.parent().unwrap()).unwrap();
         let mut ts = String::new();
         let mut js = String::new();
+        let flat_variants = variants
+            .iter()
+            .filter_map(|v| {
+                match &v.data {
+                    VariantData::Transparent { types } => {
+                        Some((types, &v.const_value_ts, &v.variant.ident))
+                    }
+                    _ => None,
+                }
+            })
+            .map(|(types, const_value_ts, v_ident)| (types
+                .iter()
+                .map(|ty| napi_derive_backend::ty_to_ts_type(ty, false, false).0)
+                .chain((repr != DiscriminantRepr::None).then(|| format!(
+                    "{{ {}: {} }}",
+                    discriminant_field_name_js_case.value(),
+                    const_value_ts
+                )))
+                .join(" & "), format_ident!("{}{}", enum_ident, v_ident)))
+            .collect::<Vec<_>>();
         writeln!(
             ts,
             "export type {} = {};",
@@ -285,30 +305,17 @@ pub fn enunion(attr_input: TokenStream, item: TokenStream) -> TokenStream {
             (struct_idents)()
                 .map(|s| s.to_string().to_case(Case::Pascal))
                 .chain(
-                    variants
-                        .iter()
-                        .filter_map(|v| {
-                            match &v.data {
-                                VariantData::Transparent { types } => {
-                                    Some((types, &v.const_value_ts))
-                                }
-                                _ => None,
-                            }
-                        })
-                        .map(|(types, const_value_ts)| types
-                            .iter()
-                            .map(|ty| napi_derive_backend::ty_to_ts_type(ty, false, false).0)
-                            .chain((repr != DiscriminantRepr::None).then(|| format!(
-                                "{{ {}: {} }}",
-                                discriminant_field_name_js_case.value(),
-                                const_value_ts
-                            )))
-                            .join(" & "))
+                    flat_variants.iter().map(|(_, i)| i.to_string())
                 )
                 .join(" | ")
         )
         .expect("Failed to write to TS output file");
         if repr != DiscriminantRepr::None {
+            for (ty, ident) in flat_variants {
+                writeln!(ts, "export type {ident} = {ty}")
+                .expect("Failed to write to TS output file");
+            }
+
             for v in variants.iter() {
                 writeln!(
                     ts,
