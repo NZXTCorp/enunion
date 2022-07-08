@@ -33,20 +33,20 @@ const SUPPORTED_REPR_TYPES: &str =
 ///
 /// **This macro will not work if `napi` and `napi_derive` are not specified in the `[dependencies]` section of the `Cargo.toml`.**
 ///
-/// This macro has a companion program called `enunion-post-build` which must be executed in the directory after `napi build` has been called. Otherwise the resulting TypeScript will not compile.
-/// One simple way to ensure this happens is with a `"postbuild"` script in `package.json` like so
+/// This macro has a companion program called `enapi` which is a mostly transparent wrapper around the `napi` CLI. You must
+/// use `enapi` instead of `napi` for your build. Otherwise the resulting TypeScript will not compile.
+/// Here's an example of what that might look like in your package.json file.
 ///
 /// ```json
 /// "scripts": {
-///   "build": "napi build --platform --release",
-///   "postbuild": "enunion-post-build",
+///   "build": "enapi build --platform --release",
 /// },
 /// ```
 ///
-/// To install `enunion-post-build` execute this
+/// To install `enapi` execute this command inside a clone of this repository
 ///
 /// ```ignore
-/// cargo install enunion-post-build
+/// cargo install --path ./enapi
 /// ```
 ///
 /// # Params
