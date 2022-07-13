@@ -1,10 +1,14 @@
 use napi_derive::napi;
 
+/// This Foo comment should be preserved in the output TS.
 #[enunion::enunion(discriminant_repr = "i64")]
+#[allow(non_snake_case)]
 pub enum Foo {
+  /// This UnionVariant comment should be preserved in the output TS.
   UnionVariant(TestObject, TestObjectTwo),
+  /// This Bar comment should be preserved in the output TS.
   Bar,
-  #[enunion(discriminant_value = 4)]
+  #[enunion(discriminant_value = 5)]
   Baz {
     a: i32,
     b: u32,
@@ -12,6 +16,10 @@ pub enum Foo {
     my_multi_word_field: i32,
   },
   UnionVariant2(TestObject, TestObjectTwo),
+  StrangeNames {
+    #[allow(non_snake_case)]
+    SomeBODY_once_told_me_theWorldIsGonnaRollMe: i32,
+  }
 }
 
 #[enunion::enunion(discriminant_repr = "i64")]
@@ -326,7 +334,10 @@ pub enum UnionOfStringEnums {
   StringTest2(StringTest2),
 }
 
-enunion::literal_typed_struct!(NowWithUnionOfStringEnums, foo: UnionOfStringEnums = UnionOfStringEnums::StringTest(StringTest::Bar));
+enunion::literal_typed_struct!(
+  NowWithUnionOfStringEnums,
+  foo: UnionOfStringEnums = UnionOfStringEnums::StringTest(StringTest::Bar)
+);
 
 #[napi]
 pub fn take_literal_structs(_l: LiteralTypedStruct) -> LiteralTypedStruct2 {

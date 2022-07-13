@@ -10,15 +10,7 @@ use std::fs::{create_dir_all, File};
 use std::io::Write;
 use std::path::PathBuf;
 use syn::token::{And, Bracket, Pound};
-use syn::{
-    parse::{Parse, ParseStream},
-    punctuated::Punctuated,
-    spanned::Spanned,
-    token::{Brace, Comma, Pub},
-    AttrStyle, Attribute, Expr, ExprCall, ExprLit, ExprPath, Field, Fields, Ident, ItemEnum,
-    Lifetime, Lit, LitStr, MetaNameValue, Path, PathArguments, PathSegment, Token, Type, TypePath,
-    TypeReference, Variant, VisPublic,
-};
+use syn::{parse::{Parse, ParseStream}, punctuated::Punctuated, spanned::Spanned, token::{Brace, Comma, Pub}, AttrStyle, Attribute, Expr, ExprCall, ExprLit, ExprPath, Field, Fields, Ident, ItemEnum, Lifetime, Lit, LitStr, MetaNameValue, Path, PathArguments, PathSegment, Token, Type, TypePath, TypeReference, Variant, VisPublic, Meta};
 
 use convert_case::{Case, Casing};
 
@@ -280,40 +272,73 @@ pub fn enunion(attr_input: TokenStream, item: TokenStream) -> TokenStream {
         let mut js = String::new();
         let flat_variants = variants
             .iter()
-            .filter_map(|v| {
-                match &v.data {
-                    VariantData::Transparent { types } => {
-                        Some((types, &v.const_value_ts, &v.variant.ident))
-                    }
-                    _ => None,
+            .filter_map(|v| match &v.data {
+                VariantData::Transparent { types } => {
+                    Some((types, &v.const_value_ts, &v.variant.ident, &v.variant.attrs))
                 }
+                _ => None,
             })
-            .map(|(types, const_value_ts, v_ident)| (types
-                .iter()
-                .map(|ty| napi_derive_backend::ty_to_ts_type(ty, false, false).0)
-                .chain((repr != DiscriminantRepr::None).then(|| format!(
-                    "{{ {}: {} }}",
-                    discriminant_field_name_js_case.value(),
-                    const_value_ts
-                )))
-                .join(" & "), format_ident!("{}{}", enum_ident, v_ident)))
+            .map(|(types, const_value_ts, v_ident, attrs)| {
+                (
+                    types
+                        .iter()
+                        .map(|ty| napi_derive_backend::ty_to_ts_type(ty, false, false).0)
+                        .chain((repr != DiscriminantRepr::None).then(|| {
+                            format!(
+                                "{{ {}: {} }}",
+                                discriminant_field_name_js_case.value(),
+                                const_value_ts
+                            )
+                        }))
+                        .join(" & "),
+                    format_ident!("{}{}", enum_ident, v_ident),
+                    attrs,
+                )
+            })
             .collect::<Vec<_>>();
+        let docs: Option<MetaNameValue> = e
+            .attrs
+            .iter()
+            .find(|a| a.path.get_ident().map(|i| i.to_string()).as_deref() == Some("doc"))
+            .and_then(|a| a.parse_meta().ok())
+            .and_then(|m| match m {
+                Meta::NameValue(m) => Some(m),
+                _ => None,
+            });
+        if let Some(docs) = docs {
+            if let Lit::Str(s) = docs.lit {
+                writeln!(ts, "/** {} */", s.value())
+                    .expect("Failed to write to TS output file");
+            }
+        }
         writeln!(
             ts,
             "export type {} = {};",
             enum_ident,
             (struct_idents)()
                 .map(|s| s.to_string().to_case(Case::Pascal))
-                .chain(
-                    flat_variants.iter().map(|(_, i)| i.to_string())
-                )
+                .chain(flat_variants.iter().map(|(_, i, _)| i.to_string()))
                 .join(" | ")
         )
         .expect("Failed to write to TS output file");
         if repr != DiscriminantRepr::None {
-            for (ty, ident) in flat_variants {
+            for (ty, ident, attrs) in flat_variants {
+                let docs: Option<MetaNameValue> = attrs
+                    .iter()
+                    .find(|a| a.path.get_ident().map(|i| i.to_string()).as_deref() == Some("doc"))
+                    .and_then(|a| a.parse_meta().ok())
+                    .and_then(|m| match m {
+                        Meta::NameValue(m) => Some(m),
+                        _ => None,
+                    });
+                if let Some(docs) = docs {
+                    if let Lit::Str(s) = docs.lit {
+                        writeln!(ts, "/** {} */", s.value())
+                            .expect("Failed to write to TS output file");
+                    }
+                }
                 writeln!(ts, "export type {ident} = {ty}")
-                .expect("Failed to write to TS output file");
+                    .expect("Failed to write to TS output file");
             }
 
             for v in variants.iter() {
@@ -363,6 +388,11 @@ pub fn enunion(attr_input: TokenStream, item: TokenStream) -> TokenStream {
             });
         }
         pub_fields
+    });
+    let struct_attrs = struct_variants_iter().map(|(v, _v_data)| {
+        let mut attrs = v.variant.attrs.clone();
+        attrs.retain(|a| a.path.get_ident().map(|i| i.to_string()).as_deref() != Some("enunion"));
+        attrs
     });
     let variant_idents = variants.iter().map(|v| &v.variant.ident);
     let struct_variant_idents = struct_variants_iter().map(|(v, _v_data)| &v.variant.ident);
@@ -422,6 +452,7 @@ pub fn enunion(attr_input: TokenStream, item: TokenStream) -> TokenStream {
             }
         } else {
             quote! {
+                #[allow(non_snake_case)]
                 #[::napi_derive::napi]
                 #[derive(Debug, Eq, PartialEq)]
                 pub enum #i {
@@ -525,6 +556,7 @@ pub fn enunion(attr_input: TokenStream, item: TokenStream) -> TokenStream {
         quote! {
             #e_altered
 
+            #[allow(non_snake_case)]
             #[doc(hidden)]
             mod #mod_ident {
                 use ::napi::bindgen_prelude::*;
@@ -579,7 +611,9 @@ pub fn enunion(attr_input: TokenStream, item: TokenStream) -> TokenStream {
                 )*
 
                 #(
+                    #[allow(non_snake_case)]
                     #[::napi_derive::napi(object)]
+                    #(#struct_attrs)*
                     struct #struct_idents {
                         #struct_fields
                         #ts_type_attrs
@@ -628,7 +662,9 @@ pub fn enunion(attr_input: TokenStream, item: TokenStream) -> TokenStream {
     } else {
         let struct_variants = quote! {
             #(
+                #[allow(non_snake_case)]
                 #[::napi_derive::napi(object)]
+                #(#struct_attrs)*
                 struct #struct_idents {
                     #struct_fields
                 }
@@ -755,6 +791,7 @@ pub fn enunion(attr_input: TokenStream, item: TokenStream) -> TokenStream {
         quote! {
             #e_altered
 
+            #[allow(non_snake_case)]
             #[doc(hidden)]
             mod #mod_ident {
                 use ::napi::bindgen_prelude::*;
@@ -1358,10 +1395,12 @@ pub fn literal_typed_struct(item: TokenStream) -> TokenStream {
             #(#field_values)*
         }
 
+        #[allow(non_snake_case)]
         #[doc(hidden)]
         mod #mod_name {
             use super::*;
 
+            #[allow(non_snake_case)]
             #[::napi_derive::napi(object)]
             pub struct #name {
                 #(

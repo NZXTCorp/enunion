@@ -18,9 +18,15 @@ fn main() {
             None
         }
     });
-    let specified_dts_index = args.iter().enumerate().find_map(|(i, a)| (a.as_str() == "--dts").then(|| i));
+    let specified_dts_index = args
+        .iter()
+        .enumerate()
+        .find_map(|(i, a)| (a.as_str() == "--dts").then(|| i));
     let specified_dts = specified_dts_index.and_then(|i| args.get(i + 1).cloned());
-    let specified_js_index = args.iter().enumerate().find_map(|(i, a)| (a.as_str() == "--js").then(|| i));
+    let specified_js_index = args
+        .iter()
+        .enumerate()
+        .find_map(|(i, a)| (a.as_str() == "--js").then(|| i));
     let specified_js = specified_js_index.and_then(|i| args.get(i + 1).cloned());
     let build_exit_status = Command::new("cmd")
         .args(["/C", "napi"])
@@ -38,7 +44,8 @@ fn main() {
             build_dir = build_dir.join(directory);
         }
         // Append new TS definitions
-        let ts_file_path = build_dir.join( specified_dts.unwrap_or_else(|| "index.d.ts".to_string()));
+        let ts_file_path =
+            build_dir.join(specified_dts.unwrap_or_else(|| "index.d.ts".to_string()));
         let mut out_ts = match std::fs::OpenOptions::new().append(true).open(&ts_file_path) {
             Ok(out_ts) => out_ts,
             Err(e) => {
@@ -47,10 +54,12 @@ fn main() {
             }
         };
 
-        let mut out_js = is_platform.then(|| std::fs::OpenOptions::new()
-            .append(true)
-            .open(specified_js.unwrap_or_else(|| "index.js".to_string()))
-            .unwrap());
+        let mut out_js = is_platform.then(|| {
+            std::fs::OpenOptions::new()
+                .append(true)
+                .open(specified_js.unwrap_or_else(|| "index.js".to_string()))
+                .unwrap()
+        });
         let read_dir_iter = match std::fs::read_dir("enunion-generated-ts") {
             Ok(i) => i,
             Err(e) => {
@@ -60,7 +69,8 @@ fn main() {
         };
         let mut read_dir_iter = read_dir_iter.collect::<Vec<_>>();
         // Sort in alphabetical order so that output order can be controlled with prefixes.
-        read_dir_iter.sort_unstable_by_key(|d| d.as_ref().ok().map(|d| d.path().display().to_string()));
+        read_dir_iter
+            .sort_unstable_by_key(|d| d.as_ref().ok().map(|d| d.path().display().to_string()));
         let mut ts = String::from("// -- BEGIN ENUNION GENERATED CODE --\n\n");
         let mut js = out_js
             .as_ref()

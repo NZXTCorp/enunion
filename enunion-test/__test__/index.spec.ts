@@ -26,7 +26,7 @@ import {
   takeLiteralDiscriminatedEnunion3,
   takeLiteralDiscriminatedEnunion4,
   takeLiteralStructs,
-  takeStringTest,
+  takeStringTest, FOO_WITH_KEYWORD_FIELD_NAME_TYPE_BAZ,
 } from "../index";
 
 it("calls takeStringTest", () => {
@@ -102,10 +102,10 @@ it("calls takeFooKeywordFieldName", () => {
     b: 2,
     c: "Hello from TypeScript",
     myMultiWordField: 2,
-    type: FOO_TYPE_BAZ,
+    type: FOO_WITH_KEYWORD_FIELD_NAME_TYPE_BAZ,
   });
-  expect(r.type).toBe(FOO_TYPE_BAZ);
-  if (r.type === FOO_TYPE_BAZ) {
+  expect(r.type).toBe(FOO_WITH_KEYWORD_FIELD_NAME_TYPE_BAZ);
+  if (r.type === FOO_WITH_KEYWORD_FIELD_NAME_TYPE_BAZ) {
     expect(r.a).toBe(1);
     expect(r.b).toBe(2);
     expect(r.c).toBe("Hello from Rust");
