@@ -7,6 +7,7 @@ use std::borrow::Cow;
 use std::env::var;
 use std::fmt::Write as _;
 use std::fs::{create_dir_all, File};
+use std::hash::{Hash, Hasher};
 use std::io::Write;
 use std::path::PathBuf;
 use syn::token::{And, Bracket, Pound};
@@ -1409,6 +1410,37 @@ pub fn literal_typed_struct(item: TokenStream) -> TokenStream {
             }
         }
     }.into()
+}
+
+/// Takes a string literal and emits it verbatim into the output TypeScript file.
+/// **This macro should only be used if no alternative is available. It comes with a high risk of
+/// breaking your emitted TypeScript file because enunion cannot account for its usage, or reason
+/// about it in any way.**
+#[proc_macro]
+#[proc_macro_error::proc_macro_error]
+pub fn raw_ts(item: TokenStream) -> TokenStream {
+    let input: LitStr = syn::parse(item).unwrap_or_else(|e| abort_call_site!("raw_ts only accepts a string literal. {:?}", e));
+    if var("TYPE_DEF_TMP_PATH").is_ok() {
+        let input = input.value();
+        // Use a sha256 hash so that each invocation of the macro will have a stable prefix between
+        // compilations. This should limit how often the output file changes order without reason.
+        let mut hasher = sha::sha256::Sha256::default();
+        input.hash(&mut hasher);
+        // Use of a CJK dash here is intentional, since it's not a character that can be used in a cargo package name.
+        let ts_path = gen_ts_folder().join(&format!(
+            "{}ー{}ーraw_tsー{}ー{}.d.ts",
+            var("CARGO_PKG_NAME").unwrap(),
+            var("CARGO_PKG_VERSION").unwrap(),
+            hasher.finish(),
+            // Use a uuid in order to distinguish the files in the event of a hash
+            // collision.
+            uuid::Uuid::new_v4(),
+        ));
+        create_dir_all(ts_path.parent().unwrap()).unwrap();
+        let mut ts_f = File::create(&ts_path).expect("Failed to open TS output file");
+        ts_f.write_all(input.as_bytes()).unwrap();
+    }
+    TokenStream::default()
 }
 
 struct FieldDescriptorData<'a> {

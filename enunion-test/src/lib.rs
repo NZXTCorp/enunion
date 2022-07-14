@@ -17,7 +17,6 @@ pub enum Foo {
   },
   UnionVariant2(TestObject, TestObjectTwo),
   StrangeNames {
-    #[allow(non_snake_case)]
     SomeBODY_once_told_me_theWorldIsGonnaRollMe: i32,
   }
 }
@@ -240,6 +239,8 @@ pub fn take_foo_default(f: DefaultFoo) -> DefaultFoo {
 pub fn take_foo_string(_f: FooString) -> FooString {
   FooString::Bar
 }
+
+enunion::raw_ts!("type RawType = \"That's cool!\";");
 
 #[napi]
 pub fn take_foo(f: Foo) -> Foo {
