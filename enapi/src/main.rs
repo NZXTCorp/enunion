@@ -7,7 +7,7 @@ use std::process::Command;
 fn main() {
     let args = env::args().skip(1).collect::<Vec<_>>();
     let is_build = args.get(0).map(|s| s == "build").unwrap_or(false);
-    let is_platform = args.iter().find(|a| a.as_str() == "--platform").is_some();
+    let is_platform = args.iter().any(|a| a.as_str() == "--platform");
     if is_build {
         let _ = std::fs::remove_dir_all("enunion-generated-ts");
     }
