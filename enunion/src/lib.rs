@@ -11,7 +11,15 @@ use std::hash::{Hash, Hasher};
 use std::io::Write;
 use std::path::PathBuf;
 use syn::token::{And, Bracket, Pound};
-use syn::{parse::{Parse, ParseStream}, punctuated::Punctuated, spanned::Spanned, token::{Brace, Comma, Pub}, AttrStyle, Attribute, Expr, ExprCall, ExprLit, ExprPath, Field, Fields, Ident, ItemEnum, Lifetime, Lit, LitStr, MetaNameValue, Path, PathArguments, PathSegment, Token, Type, TypePath, TypeReference, Variant, VisPublic, Meta};
+use syn::{
+    parse::{Parse, ParseStream},
+    punctuated::Punctuated,
+    spanned::Spanned,
+    token::{Brace, Comma, Pub},
+    AttrStyle, Attribute, Expr, ExprCall, ExprLit, ExprPath, Field, Fields, Ident, ItemEnum,
+    Lifetime, Lit, LitStr, Meta, MetaNameValue, Path, PathArguments, PathSegment, Token, Type,
+    TypePath, TypeReference, Variant, VisPublic,
+};
 
 use convert_case::{Case, Casing};
 
@@ -308,8 +316,7 @@ pub fn enunion(attr_input: TokenStream, item: TokenStream) -> TokenStream {
             });
         if let Some(docs) = docs {
             if let Lit::Str(s) = docs.lit {
-                writeln!(ts, "/** {} */", s.value())
-                    .expect("Failed to write to TS output file");
+                writeln!(ts, "/** {} */", s.value()).expect("Failed to write to TS output file");
             }
         }
         writeln!(
@@ -1419,7 +1426,8 @@ pub fn literal_typed_struct(item: TokenStream) -> TokenStream {
 #[proc_macro]
 #[proc_macro_error::proc_macro_error]
 pub fn raw_ts(item: TokenStream) -> TokenStream {
-    let input: LitStr = syn::parse(item).unwrap_or_else(|e| abort_call_site!("raw_ts only accepts a string literal. {:?}", e));
+    let input: LitStr = syn::parse(item)
+        .unwrap_or_else(|e| abort_call_site!("raw_ts only accepts a string literal. {:?}", e));
     if var("TYPE_DEF_TMP_PATH").is_ok() {
         let input = input.value();
         // Use a sha256 hash so that each invocation of the macro will have a stable prefix between
