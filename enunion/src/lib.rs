@@ -334,8 +334,7 @@ pub fn enunion(attr_input: TokenStream, item: TokenStream) -> TokenStream {
                         .expect("Failed to write to TS output file");
                 }
             }
-            writeln!(ts, "export type {ident} = {ty}")
-                .expect("Failed to write to TS output file");
+            writeln!(ts, "export type {ident} = {ty}").expect("Failed to write to TS output file");
         }
         writeln!(
             ts,
