@@ -37,7 +37,7 @@ jobs:
       - name: Npm
         working-directory: ./enunion-test
         run: npm ci
-      - name: Install enunion-post-build
-        run: cd enunion-post-build && cargo install --path . && cd ..
+      - name: Install enapi
+        run: cargo install --path ./enapi/
       - name: Build and test
         run: cd enunion-test && npm run build && npm run test && cd ..
