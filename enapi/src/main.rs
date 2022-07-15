@@ -28,8 +28,16 @@ fn main() {
         .enumerate()
         .find_map(|(i, a)| (a.as_str() == "--js").then(|| i));
     let specified_js = specified_js_index.and_then(|i| args.get(i + 1).cloned());
+    #[cfg(target_os = "windows")]
     let build_exit_status = Command::new("cmd")
         .args(["/C", "napi"])
+        .args(args.into_iter())
+        .spawn()
+        .unwrap()
+        .wait()
+        .unwrap();
+    #[cfg(not(target_os = "windows"))]
+    let build_exit_status = Command::new("napi")
         .args(args.into_iter())
         .spawn()
         .unwrap()
