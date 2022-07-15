@@ -39,5 +39,7 @@ jobs:
         run: npm ci
       - name: Install enapi
         run: cargo install --path ./enapi/
+      - name: Install TypeScript
+        run: npm install typescript -g
       - name: Build and test
         run: cd enunion-test && npm install && npm run build && tsc --noEmit && npm run test && cd ..
