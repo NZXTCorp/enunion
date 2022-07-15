@@ -40,4 +40,4 @@ jobs:
       - name: Install enapi
         run: cargo install --path ./enapi/
       - name: Build and test
-        run: cd enunion-test && tsc --noEmit && npm run build && npm run test && cd ..
+        run: cd enunion-test && npm run build && tsc --noEmit && npm run test && cd ..
