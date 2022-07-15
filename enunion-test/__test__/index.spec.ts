@@ -59,7 +59,9 @@ it("calls takeFooEnumStr", () => {
 
 it("calls takeFooNoDiscriminant", () => {
   let r = takeFooNoDiscriminant({ a: 1, b: 2 });
+  // @ts-ignore
   expect(r["d"]).toBe(1);
+  // @ts-ignore
   expect(r["b"]).toBe(2);
   expect(Object.keys(r).length).toBe(2);
 });

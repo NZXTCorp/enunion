@@ -319,6 +319,24 @@ pub fn enunion(attr_input: TokenStream, item: TokenStream) -> TokenStream {
                 writeln!(ts, "/** {} */", s.value()).expect("Failed to write to TS output file");
             }
         }
+        for (ty, ident, attrs) in flat_variants.iter() {
+            let docs: Option<MetaNameValue> = attrs
+                .iter()
+                .find(|a| a.path.get_ident().map(|i| i.to_string()).as_deref() == Some("doc"))
+                .and_then(|a| a.parse_meta().ok())
+                .and_then(|m| match m {
+                    Meta::NameValue(m) => Some(m),
+                    _ => None,
+                });
+            if let Some(docs) = docs {
+                if let Lit::Str(s) = docs.lit {
+                    writeln!(ts, "/** {} */", s.value())
+                        .expect("Failed to write to TS output file");
+                }
+            }
+            writeln!(ts, "export type {ident} = {ty}")
+                .expect("Failed to write to TS output file");
+        }
         writeln!(
             ts,
             "export type {} = {};",
@@ -330,25 +348,6 @@ pub fn enunion(attr_input: TokenStream, item: TokenStream) -> TokenStream {
         )
         .expect("Failed to write to TS output file");
         if repr != DiscriminantRepr::None {
-            for (ty, ident, attrs) in flat_variants {
-                let docs: Option<MetaNameValue> = attrs
-                    .iter()
-                    .find(|a| a.path.get_ident().map(|i| i.to_string()).as_deref() == Some("doc"))
-                    .and_then(|a| a.parse_meta().ok())
-                    .and_then(|m| match m {
-                        Meta::NameValue(m) => Some(m),
-                        _ => None,
-                    });
-                if let Some(docs) = docs {
-                    if let Lit::Str(s) = docs.lit {
-                        writeln!(ts, "/** {} */", s.value())
-                            .expect("Failed to write to TS output file");
-                    }
-                }
-                writeln!(ts, "export type {ident} = {ty}")
-                    .expect("Failed to write to TS output file");
-            }
-
             for v in variants.iter() {
                 writeln!(
                     ts,
