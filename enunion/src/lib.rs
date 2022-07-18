@@ -305,37 +305,11 @@ pub fn enunion(attr_input: TokenStream, item: TokenStream) -> TokenStream {
                 )
             })
             .collect::<Vec<_>>();
-        let docs: Option<MetaNameValue> = e
-            .attrs
-            .iter()
-            .find(|a| a.path.get_ident().map(|i| i.to_string()).as_deref() == Some("doc"))
-            .and_then(|a| a.parse_meta().ok())
-            .and_then(|m| match m {
-                Meta::NameValue(m) => Some(m),
-                _ => None,
-            });
-        if let Some(docs) = docs {
-            if let Lit::Str(s) = docs.lit {
-                writeln!(ts, "/** {} */", s.value()).expect("Failed to write to TS output file");
-            }
-        }
         for (ty, ident, attrs) in flat_variants.iter() {
-            let docs: Option<MetaNameValue> = attrs
-                .iter()
-                .find(|a| a.path.get_ident().map(|i| i.to_string()).as_deref() == Some("doc"))
-                .and_then(|a| a.parse_meta().ok())
-                .and_then(|m| match m {
-                    Meta::NameValue(m) => Some(m),
-                    _ => None,
-                });
-            if let Some(docs) = docs {
-                if let Lit::Str(s) = docs.lit {
-                    writeln!(ts, "/** {} */", s.value())
-                        .expect("Failed to write to TS output file");
-                }
-            }
+            write_docs(&attrs, &mut ts);
             writeln!(ts, "export type {ident} = {ty}").expect("Failed to write to TS output file");
         }
+        write_docs(&e.attrs, &mut ts);
         writeln!(
             ts,
             "export type {} = {};",
@@ -838,6 +812,26 @@ pub fn enunion(attr_input: TokenStream, item: TokenStream) -> TokenStream {
     }.into()
 }
 
+fn write_docs(attrs: &[Attribute], ts: &mut String) {
+    let docs: Option<MetaNameValue> = attrs
+        .iter()
+        .find(|a| a.path.get_ident().map(|i| i.to_string()).as_deref() == Some("doc"))
+        .and_then(|a| a.parse_meta().ok())
+        .and_then(|m| match m {
+            Meta::NameValue(m) => Some(m),
+            _ => None,
+        });
+    if let Some(docs) = docs {
+        if let Lit::Str(s) = docs.lit {
+            writeln!(ts, "/**").expect("Failed to write to TS output file");
+            for line in s.value().lines() {
+                writeln!(ts, " * {}", line).expect("Failed to write to TS output file");
+            }
+            writeln!(ts, " */").expect("Failed to write to TS output file");
+        }
+    }
+}
+
 #[allow(clippy::large_enum_variant)] // Large variant is most common
 enum VariantData {
     Struct(VariantStructData),
@@ -1110,6 +1104,7 @@ pub fn string_enum(_attr_input: TokenStream, item: TokenStream) -> TokenStream {
         create_dir_all(ts_path.parent().unwrap()).unwrap();
         let mut ts = String::new();
         let mut js = String::new();
+        write_docs(&e.attrs, &mut ts);
         writeln!(ts, "export const enum {} {{", enum_ident)
             .expect("Failed to write to TS output file");
         writeln!(

@@ -18,7 +18,7 @@ pub enum Foo {
   UnionVariant2(TestObject, TestObjectTwo),
   StrangeNames {
     SomeBODY_once_told_me_theWorldIsGonnaRollMe: i32,
-  }
+  },
 }
 
 #[enunion::enunion(discriminant_repr = "i64")]
@@ -149,6 +149,7 @@ pub enum DefaultFoo {
   Baz { a: i32, b: u32, c: String },
 }
 
+/// This StringTest comment should be preserved in the output.
 #[enunion::string_enum]
 #[derive(Debug)]
 pub enum StringTest {
