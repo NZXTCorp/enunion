@@ -306,10 +306,10 @@ pub fn enunion(attr_input: TokenStream, item: TokenStream) -> TokenStream {
             })
             .collect::<Vec<_>>();
         for (ty, ident, attrs) in flat_variants.iter() {
-            write_docs(&attrs, &mut ts);
+            write_docs(&attrs, "", &mut ts);
             writeln!(ts, "export type {ident} = {ty}").expect("Failed to write to TS output file");
         }
-        write_docs(&e.attrs, &mut ts);
+        write_docs(&e.attrs, "", &mut ts);
         writeln!(
             ts,
             "export type {} = {};",
@@ -812,7 +812,7 @@ pub fn enunion(attr_input: TokenStream, item: TokenStream) -> TokenStream {
     }.into()
 }
 
-fn write_docs(attrs: &[Attribute], ts: &mut String) {
+fn write_docs(attrs: &[Attribute], prefix: &str, ts: &mut String) {
     let docs: Option<MetaNameValue> = attrs
         .iter()
         .find(|a| a.path.get_ident().map(|i| i.to_string()).as_deref() == Some("doc"))
@@ -823,11 +823,11 @@ fn write_docs(attrs: &[Attribute], ts: &mut String) {
         });
     if let Some(docs) = docs {
         if let Lit::Str(s) = docs.lit {
-            writeln!(ts, "/**").expect("Failed to write to TS output file");
+            writeln!(ts, "{}/**", prefix).expect("Failed to write to TS output file");
             for line in s.value().lines() {
-                writeln!(ts, " * {}", line).expect("Failed to write to TS output file");
+                writeln!(ts, "{} * {}", prefix, line).expect("Failed to write to TS output file");
             }
-            writeln!(ts, " */").expect("Failed to write to TS output file");
+            writeln!(ts, "{} */", prefix).expect("Failed to write to TS output file");
         }
     }
 }
@@ -1104,7 +1104,7 @@ pub fn string_enum(_attr_input: TokenStream, item: TokenStream) -> TokenStream {
         create_dir_all(ts_path.parent().unwrap()).unwrap();
         let mut ts = String::new();
         let mut js = String::new();
-        write_docs(&e.attrs, &mut ts);
+        write_docs(&e.attrs, "",  &mut ts);
         writeln!(ts, "export const enum {} {{", enum_ident)
             .expect("Failed to write to TS output file");
         writeln!(
@@ -1114,6 +1114,7 @@ pub fn string_enum(_attr_input: TokenStream, item: TokenStream) -> TokenStream {
         )
         .expect("Failed to write to TS output file");
         for (i, v) in e.variants.iter().enumerate() {
+            write_docs(&v.attrs, "  ", &mut ts);
             writeln!(
                 ts,
                 "  {ident} = \"{value}\",",

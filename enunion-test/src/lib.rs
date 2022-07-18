@@ -153,6 +153,7 @@ pub enum DefaultFoo {
 #[enunion::string_enum]
 #[derive(Debug)]
 pub enum StringTest {
+  /// This StringTest::Bar comment should be preserved in the output.
   #[string_enum(value = "bar")]
   Bar,
   #[string_enum(value = "baz")]
