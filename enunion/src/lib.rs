@@ -306,7 +306,7 @@ pub fn enunion(attr_input: TokenStream, item: TokenStream) -> TokenStream {
             })
             .collect::<Vec<_>>();
         for (ty, ident, attrs) in flat_variants.iter() {
-            write_docs(&attrs, "", &mut ts);
+            write_docs(attrs, "", &mut ts);
             writeln!(ts, "export type {ident} = {ty}").expect("Failed to write to TS output file");
         }
         write_docs(&e.attrs, "", &mut ts);
@@ -1104,9 +1104,8 @@ pub fn string_enum(_attr_input: TokenStream, item: TokenStream) -> TokenStream {
         create_dir_all(ts_path.parent().unwrap()).unwrap();
         let mut ts = String::new();
         let mut js = String::new();
-        write_docs(&e.attrs, "",  &mut ts);
-        writeln!(ts, "export const enum {} {{", enum_ident)
-            .expect("Failed to write to TS output file");
+        write_docs(&e.attrs, "", &mut ts);
+        writeln!(ts, "export enum {} {{", enum_ident).expect("Failed to write to TS output file");
         writeln!(
             js,
             "module.exports.{ident} = nativeBinding.{ident}",
@@ -1219,7 +1218,7 @@ pub fn string_enum(_attr_input: TokenStream, item: TokenStream) -> TokenStream {
             let env = unsafe { ::napi::Env::from_raw(__enunion_env) };
             let mut enum_object = env.create_object()?;
             #(
-                enum_object.set(#str_literals, #str_literals)?;
+                enum_object.set(stringify!(#variant_idents), #str_literals)?;
             )*
              Ok(<::napi::JsObject as ::napi::NapiRaw>::raw(&enum_object))
         }

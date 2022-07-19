@@ -169,3 +169,16 @@ it("check Serialization and Deserialization of LiteralDiscriminated", () => {
   expect(l4.foo).toBe(3);
   expect(l4.bar).toBe(true);
 })
+
+
+it("check that you can iterate exported string enums", () => {
+  let keys = Object.keys(StringTest);
+  expect(keys.length).toBe(3);
+  expect(keys.includes("Zoom")).toBe(true)
+  expect(keys.includes("Bar")).toBe(true)
+  expect(keys.includes("Baz")).toBe(true)
+  expect(StringTest.Zoom).toBe("Zoom")
+  expect(StringTest.Bar).toBe("bar")
+  expect(StringTest.Baz).toBe("baz")
+
+})
