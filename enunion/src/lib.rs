@@ -110,6 +110,7 @@ pub fn enunion(attr_input: TokenStream, item: TokenStream) -> TokenStream {
     let attr: Args = syn::parse(attr_input).unwrap_or_else(|e| abort_call_site!("Failed to parse enunion input, please use field = \"value\" in a comma separated list. Check the documentation for examples. Error: {:?}", e));
     let mut repr = None;
     let mut discriminant_field_name = None;
+    let mut export_variant_types = None;
     for MetaNameValue { path, lit, .. } in attr.items.iter() {
         match path.get_ident().map(|i| i.to_string()).as_deref() {
             Some("discriminant_repr") => match lit {
@@ -147,6 +148,12 @@ pub fn enunion(attr_input: TokenStream, item: TokenStream) -> TokenStream {
                     }
                     _ => abort_call_site!("only string literals are supported for the discriminant_field_name, please provide a string")
                 },
+            Some("export_variant_types") => match lit {
+                Lit::Bool(b) => {
+                    export_variant_types = Some(b.value());
+                },
+                _ => abort_call_site!("only bool literals are supported for export_variant_types, please provide a bool")
+            },
             _ => {
                 abort_call_site!("{} is not a recognized argument, only discriminant_repr, and discriminant_field_name are recognized.", path.to_token_stream());
             }
@@ -305,9 +312,12 @@ pub fn enunion(attr_input: TokenStream, item: TokenStream) -> TokenStream {
                 )
             })
             .collect::<Vec<_>>();
-        for (ty, ident, attrs) in flat_variants.iter() {
-            write_docs(attrs, "", &mut ts);
-            writeln!(ts, "export type {ident} = {ty}").expect("Failed to write to TS output file");
+        if export_variant_types.unwrap_or(true) {
+            for (ty, ident, attrs) in flat_variants.iter() {
+                write_docs(attrs, "", &mut ts);
+                writeln!(ts, "export type {ident} = {ty}")
+                    .expect("Failed to write to TS output file");
+            }
         }
         write_docs(&e.attrs, "", &mut ts);
         writeln!(
@@ -316,7 +326,13 @@ pub fn enunion(attr_input: TokenStream, item: TokenStream) -> TokenStream {
             enum_ident,
             (struct_idents)()
                 .map(|s| s.to_string().to_case(Case::Pascal))
-                .chain(flat_variants.iter().map(|(_, i, _)| i.to_string()))
+                .chain(flat_variants.iter().map(|(ty, i, _)| {
+                    if export_variant_types.unwrap_or(true) {
+                        i.to_string()
+                    } else {
+                        ty.clone()
+                    }
+                }))
                 .join(" | ")
         )
         .expect("Failed to write to TS output file");

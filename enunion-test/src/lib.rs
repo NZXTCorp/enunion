@@ -109,6 +109,12 @@ pub enum FooNoDiscriminant {
   TransparentManyStructs(FooNew, FooString),
 }
 
+#[enunion::enunion(discriminant_repr = "none", export_variant_types = false)]
+pub enum FooNoDiscriminantNoVariantTypes {
+  TransparentOneField(StringTest),
+  TransparentManyStructs(FooNew, FooString),
+}
+
 #[enunion::enunion(discriminant_repr = "i64", discriminant_field_name = "new_type")]
 pub enum FooNew {
   UnionVariant(TestObject, TestObjectTwo),
