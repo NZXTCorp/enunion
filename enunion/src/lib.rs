@@ -290,20 +290,20 @@ pub fn enunion(attr_input: TokenStream, item: TokenStream) -> TokenStream {
             .iter()
             .filter_map(|v| match &v.data {
                 VariantData::Transparent { types } => {
-                    Some((types, &v.const_value_ts, &v.variant.ident, &v.variant.attrs))
+                    Some((types, v.const_ident.to_string(), &v.variant.ident, &v.variant.attrs))
                 }
                 _ => None,
             })
-            .map(|(types, const_value_ts, v_ident, attrs)| {
+            .map(|(types, const_ident, v_ident, attrs)| {
                 (
                     types
                         .iter()
                         .map(|ty| napi_derive_backend::ty_to_ts_type(ty, false, false).0)
                         .chain((repr != DiscriminantRepr::None).then(|| {
                             format!(
-                                "{{ {}: {} }}",
+                                "{{ {}: typeof {} }}",
                                 discriminant_field_name_js_case.value(),
-                                const_value_ts
+                                const_ident
                             )
                         }))
                         .join(" & "),
@@ -362,9 +362,9 @@ pub fn enunion(attr_input: TokenStream, item: TokenStream) -> TokenStream {
     let struct_const_idents = struct_variants_iter().map(|(v, _v_data)| &v.const_ident);
     let const_values = variants.iter().map(|v| &v.const_value);
     let ts_type_attrs = struct_variants_iter().map(|(v, _v_data)| {
-        let const_value = syn::LitStr::new(&v.const_value_ts.to_string(), Span::call_site());
+        let const_ident = syn::LitStr::new(&format!("typeof {}", v.const_ident.to_string()), Span::call_site());
         quote! {
-            #[napi(ts_type = #const_value)]
+            #[napi(ts_type = #const_ident)]
         }
     });
     let struct_fields = struct_variants_iter().map(|(_v, v_data)| {
