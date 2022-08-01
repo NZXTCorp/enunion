@@ -1076,26 +1076,35 @@ pub fn string_enum(_attr_input: TokenStream, item: TokenStream) -> TokenStream {
             Ok(o) => o,
             Err(e) => abort_call_site!("Failed to parse string_enum variant `{}` attribute input, please use field = \"value\" in a comma separated list. Check the documentation for examples. Error: {:?}", v.ident, e)
         };
+        let mut key = None;
         let mut value = None;
         if let Some(variant_args) = variant_args {
             for arg in variant_args.items {
                 match arg.path.get_ident().map(|i| i.to_string()).as_deref() {
+                    Some("key") => match arg.lit {
+                        Lit::Str(s) => {
+                            key = Some(s.value());
+                        }
+                        _ => {
+                            abort!(arg.lit.span(), "literal type provided is not supported, please use a string.");
+                        }
+                    },
                     Some("value") => match arg.lit {
                         Lit::Str(s) => {
                             value = Some(s.value());
                         }
                         _ => {
-                            abort_call_site!("literal type provided for {} is not supported, please use a string.", v.ident);
+                            abort!(arg.lit.span(), "literal type provided is not supported, please use a string.");
                         }
                     },
                     _ => abort_call_site!(
-                        "{} was not a recognized string_enum argument, please use `value`.",
+                        "{} was not a recognized string_enum argument, please use `key` or `value`.",
                         arg.path.to_token_stream()
                     ),
                 }
             }
         }
-        str_literals.push(value.unwrap_or_else(|| v.ident.to_string()));
+        str_literals.push((key.unwrap_or_else(|| v.ident.to_string()), value.unwrap_or_else(|| v.ident.to_string())));
     }
     let enum_ident = &e.ident;
     let variant_idents = e.variants.iter().map(|v| &v.ident).collect::<Vec<_>>();
@@ -1130,11 +1139,12 @@ pub fn string_enum(_attr_input: TokenStream, item: TokenStream) -> TokenStream {
         .expect("Failed to write to TS output file");
         for (i, v) in e.variants.iter().enumerate() {
             write_docs(&v.attrs, "  ", &mut ts);
+            let (key, value) = &str_literals[i];
             writeln!(
                 ts,
                 "  {ident} = \"{value}\",",
-                ident = v.ident,
-                value = str_literals[i]
+                ident = key,
+                value = value
             )
             .expect("Failed to write to TS output file");
         }
@@ -1144,6 +1154,7 @@ pub fn string_enum(_attr_input: TokenStream, item: TokenStream) -> TokenStream {
         let mut js_f = File::create(&js_path).expect("Failed to open JS output file");
         js_f.write_all(js.as_bytes()).unwrap();
     }
+    let (keys, values): (Vec<_>, Vec<_>) = str_literals.into_iter().unzip();
     let init_fn_ident = format_ident!(
         "____napi_register__enunion_{}",
         enum_ident.to_string().to_case(Case::Snake)
@@ -1171,7 +1182,7 @@ pub fn string_enum(_attr_input: TokenStream, item: TokenStream) -> TokenStream {
             unsafe fn from_napi_value(__enunion_env: ::napi::sys::napi_env, __enunion_napi_val: ::napi::sys::napi_value) -> ::napi::bindgen_prelude::Result<Self> {
                 let v = <String as ::napi::bindgen_prelude::FromNapiValue>::from_napi_value(__enunion_env, __enunion_napi_val)?;
                 match v.as_str() {
-                    #(#str_literals => Ok(#enum_ident::#variant_idents),)*
+                    #(#values => Ok(#enum_ident::#variant_idents),)*
                     _ => Err(::napi::Error::from_reason(format!("JS string provided was not a valid {}, string is {:?}", stringify!(#enum_ident), v)))
                 }
             }
@@ -1180,7 +1191,7 @@ pub fn string_enum(_attr_input: TokenStream, item: TokenStream) -> TokenStream {
         impl ::napi::bindgen_prelude::ToNapiValue for #enum_ident {
             unsafe fn to_napi_value(__enunion_env: ::napi::sys::napi_env, val: Self) -> ::napi::bindgen_prelude::Result<::napi::sys::napi_value> {
                 match &val {
-                    #(#enum_ident::#variant_idents => ::napi::bindgen_prelude::ToNapiValue::to_napi_value(__enunion_env, #str_literals),)*
+                    #(#enum_ident::#variant_idents => ::napi::bindgen_prelude::ToNapiValue::to_napi_value(__enunion_env, #values),)*
                 }
             }
         }
@@ -1204,7 +1215,7 @@ pub fn string_enum(_attr_input: TokenStream, item: TokenStream) -> TokenStream {
         impl ::std::convert::AsRef<str> for #enum_ident {
             fn as_ref(&self) -> &str {
                 match self {
-                    #(#enum_ident::#variant_idents => #str_literals,)*
+                    #(#enum_ident::#variant_idents => #values,)*
                 }
             }
         }
@@ -1212,7 +1223,7 @@ pub fn string_enum(_attr_input: TokenStream, item: TokenStream) -> TokenStream {
         impl ::std::convert::From<#enum_ident> for &'static str {
             fn from(e: #enum_ident) -> Self {
                 match e {
-                    #(#enum_ident::#variant_idents => #str_literals,)*
+                    #(#enum_ident::#variant_idents => #values,)*
                 }
             }
         }
@@ -1221,7 +1232,7 @@ pub fn string_enum(_attr_input: TokenStream, item: TokenStream) -> TokenStream {
             type Err = String;
             fn from_str(s: &str) -> ::std::result::Result<Self, Self::Err> {
                 match s {
-                    #(#str_literals => Ok(#enum_ident::#variant_idents),)*
+                    #(#values => Ok(#enum_ident::#variant_idents),)*
                     _ => Err(format!("string provided was not a valid {}, string is {:?}", stringify!(#enum_ident), s))
                 }
             }
@@ -1234,7 +1245,7 @@ pub fn string_enum(_attr_input: TokenStream, item: TokenStream) -> TokenStream {
             let env = unsafe { ::napi::Env::from_raw(__enunion_env) };
             let mut enum_object = env.create_object()?;
             #(
-                enum_object.set(stringify!(#variant_idents), #str_literals)?;
+                enum_object.set(#keys, #values)?;
             )*
              Ok(<::napi::JsObject as ::napi::NapiRaw>::raw(&enum_object))
         }

@@ -165,6 +165,8 @@ pub enum StringTest {
   #[string_enum(value = "baz")]
   Baz,
   Zoom,
+  #[string_enum(key = "A_STRANGE_KEY")]
+  AStrangeKey,
 }
 
 #[enunion::string_enum]
