@@ -1386,7 +1386,7 @@ pub fn literal_typed_struct(item: TokenStream) -> TokenStream {
                     match #get_field {
                         Some(value) => {
                             if !matches!(value, #consts) {
-                                return Err(::napi::Error::from_reason(format!("Value \"{}\" was found, but it wasn't equal to \"{:?}\"", #js_names, #consts)));
+                                return Err(::napi::Error::from_reason(format!("Value \"{}\" was found, but it wasn't equal to {:?}", #js_names, #consts)));
                             }
                         }
                         None => {
