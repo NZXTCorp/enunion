@@ -7,7 +7,6 @@ use std::borrow::Cow;
 use std::env::var;
 use std::fmt::Write as _;
 use std::fs::{create_dir_all, File};
-use std::hash::{Hash, Hasher};
 use std::io::Write;
 use std::path::PathBuf;
 use syn::token::{And, Bracket, Pound};
@@ -22,6 +21,7 @@ use syn::{
 };
 
 use convert_case::{Case, Casing};
+use sha2::Digest;
 
 type ProcMacroErrors = Vec<(Span, String)>;
 
@@ -289,9 +289,12 @@ pub fn enunion(attr_input: TokenStream, item: TokenStream) -> TokenStream {
         let flat_variants = variants
             .iter()
             .filter_map(|v| match &v.data {
-                VariantData::Transparent { types } => {
-                    Some((types, v.const_ident.to_string(), &v.variant.ident, &v.variant.attrs))
-                }
+                VariantData::Transparent { types } => Some((
+                    types,
+                    v.const_ident.to_string(),
+                    &v.variant.ident,
+                    &v.variant.attrs,
+                )),
                 _ => None,
             })
             .map(|(types, const_ident, v_ident, attrs)| {
@@ -362,7 +365,10 @@ pub fn enunion(attr_input: TokenStream, item: TokenStream) -> TokenStream {
     let struct_const_idents = struct_variants_iter().map(|(v, _v_data)| &v.const_ident);
     let const_values = variants.iter().map(|v| &v.const_value);
     let ts_type_attrs = struct_variants_iter().map(|(v, _v_data)| {
-        let const_ident = syn::LitStr::new(&format!("typeof {}", v.const_ident.to_string()), Span::call_site());
+        let const_ident = syn::LitStr::new(
+            &format!("typeof {}", v.const_ident.to_string()),
+            Span::call_site(),
+        );
         quote! {
             #[napi(ts_type = #const_ident)]
         }
@@ -1104,7 +1110,10 @@ pub fn string_enum(_attr_input: TokenStream, item: TokenStream) -> TokenStream {
                 }
             }
         }
-        str_literals.push((key.unwrap_or_else(|| v.ident.to_string()), value.unwrap_or_else(|| v.ident.to_string())));
+        str_literals.push((
+            key.unwrap_or_else(|| v.ident.to_string()),
+            value.unwrap_or_else(|| v.ident.to_string()),
+        ));
     }
     let enum_ident = &e.ident;
     let variant_idents = e.variants.iter().map(|v| &v.ident).collect::<Vec<_>>();
@@ -1140,13 +1149,8 @@ pub fn string_enum(_attr_input: TokenStream, item: TokenStream) -> TokenStream {
         for (i, v) in e.variants.iter().enumerate() {
             write_docs(&v.attrs, "  ", &mut ts);
             let (key, value) = &str_literals[i];
-            writeln!(
-                ts,
-                "  {ident} = \"{value}\",",
-                ident = key,
-                value = value
-            )
-            .expect("Failed to write to TS output file");
+            writeln!(ts, "  {ident} = \"{value}\",", ident = key, value = value)
+                .expect("Failed to write to TS output file");
         }
         writeln!(ts, "}}").expect("Failed to write to TS output file");
         let mut ts_f = File::create(&ts_path).expect("Failed to open TS output file");
@@ -1452,14 +1456,15 @@ pub fn raw_ts(item: TokenStream) -> TokenStream {
         let input = input.value();
         // Use a sha256 hash so that each invocation of the macro will have a stable prefix between
         // compilations. This should limit how often the output file changes order without reason.
-        let mut hasher = sha::sha256::Sha256::default();
-        input.hash(&mut hasher);
+        let mut hasher = sha2::Sha256::new();
+        hasher.update(&input);
+
         // Use of a CJK dash here is intentional, since it's not a character that can be used in a cargo package name.
         let ts_path = gen_ts_folder().join(&format!(
             "{}ー{}ーraw_tsー{}ー{}.d.ts",
             var("CARGO_PKG_NAME").unwrap(),
             var("CARGO_PKG_VERSION").unwrap(),
-            hasher.finish(),
+            hex::encode(hasher.finalize()),
             // Use a uuid in order to distinguish the files in the event of a hash
             // collision.
             uuid::Uuid::new_v4(),
