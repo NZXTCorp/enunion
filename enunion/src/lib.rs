@@ -365,10 +365,7 @@ pub fn enunion(attr_input: TokenStream, item: TokenStream) -> TokenStream {
     let struct_const_idents = struct_variants_iter().map(|(v, _v_data)| &v.const_ident);
     let const_values = variants.iter().map(|v| &v.const_value);
     let ts_type_attrs = struct_variants_iter().map(|(v, _v_data)| {
-        let const_ident = syn::LitStr::new(
-            &format!("typeof {}", v.const_ident.to_string()),
-            Span::call_site(),
-        );
+        let const_ident = syn::LitStr::new(&format!("typeof {}", v.const_ident), Span::call_site());
         quote! {
             #[napi(ts_type = #const_ident)]
         }
@@ -706,13 +703,14 @@ pub fn enunion(attr_input: TokenStream, item: TokenStream) -> TokenStream {
                 match &v.data {
                     VariantData::Struct(s) => {
                         let s_ident = &s.struct_ident;
+                        let v_ident = &v.variant.ident;
                         quote! {
                             match <#s_ident as ::napi::bindgen_prelude::FromNapiValue>::from_napi_value(__enunion_env, __enunion_napi_val) {
                                 Ok(v) => {
                                     return Ok(<#s_ident as Into<super::#enum_ident>>::into(v));
                                 },
                                 Err(e) => {
-                                    errs.push(e);
+                                    errs.push((format!("Error deserializing variant {}", stringify!(#v_ident)), e));
                                 },
                             }
                         }
@@ -728,7 +726,7 @@ pub fn enunion(attr_input: TokenStream, item: TokenStream) -> TokenStream {
                                     let #field_range = match <#types as ::napi::bindgen_prelude::FromNapiValue>::from_napi_value(__enunion_env, __enunion_napi_val) {
                                         Ok(#field_range) => #field_range,
                                         Err(e) => {
-                                            errs.push(e);
+                                            errs.push((format!("Error deserializing variant {}", stringify!(#v_ident)), e));
                                             break;
                                         }
                                     };
@@ -803,7 +801,7 @@ pub fn enunion(attr_input: TokenStream, item: TokenStream) -> TokenStream {
                     unsafe fn from_napi_value(__enunion_env: ::napi::sys::napi_env, __enunion_napi_val: ::napi::sys::napi_value) -> ::napi::bindgen_prelude::Result<Self> {
                         let mut errs = Vec::new();
                         #from_attempts
-                        Err(::napi::Error::from_reason(format!("JS object provided was not a valid {}, no variants deserialized correctly. Errors: {:?}", stringify!(#enum_ident), errs)))
+                        Err(::napi::Error::from_reason(format!("JS object provided was not a valid {}, no variants deserialized correctly. Errors: {:#?}", stringify!(#enum_ident), errs)))
                     }
                 }
 
