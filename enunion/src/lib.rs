@@ -572,6 +572,12 @@ pub fn enunion(attr_input: TokenStream, item: TokenStream) -> TokenStream {
                     }
                 }
 
+                impl ::napi::bindgen_prelude::ValidateNapiValue for super::#enum_ident {
+                    unsafe fn validate(__enunion_env: ::napi::sys::napi_env, __enunion_napi_val: ::napi::sys::napi_value) -> ::napi::bindgen_prelude::Result<::napi::sys::napi_value> {
+                        <Self as ::napi::bindgen_prelude::FromNapiValue>::from_napi_value(__enunion_env, __enunion_napi_val).map(|_| ::std::ptr::null_mut())
+                    }
+                }
+
                 impl ::napi::bindgen_prelude::ToNapiValue for super::#enum_ident {
                     unsafe fn to_napi_value(__enunion_env: ::napi::sys::napi_env, val: Self) -> ::napi::bindgen_prelude::Result<::napi::sys::napi_value> {
                         match val {
@@ -586,7 +592,7 @@ pub fn enunion(attr_input: TokenStream, item: TokenStream) -> TokenStream {
                     }
 
                     fn value_type() -> ::napi::bindgen_prelude::ValueType {
-                        ::napi::bindgen_prelude::ValueType::Unknown
+                        ::napi::bindgen_prelude::ValueType::Object
                     }
                 }
 
@@ -802,6 +808,12 @@ pub fn enunion(attr_input: TokenStream, item: TokenStream) -> TokenStream {
                         let mut errs = Vec::new();
                         #from_attempts
                         Err(::napi::Error::from_reason(format!("JS object provided was not a valid {}, no variants deserialized correctly. Errors: {:#?}", stringify!(#enum_ident), errs)))
+                    }
+                }
+
+                impl ::napi::bindgen_prelude::ValidateNapiValue for super::#enum_ident {
+                    unsafe fn validate(__enunion_env: ::napi::sys::napi_env, __enunion_napi_val: ::napi::sys::napi_value) -> ::napi::bindgen_prelude::Result<::napi::sys::napi_value> {
+                        <Self as ::napi::bindgen_prelude::FromNapiValue>::from_napi_value(__enunion_env, __enunion_napi_val).map(|_| ::std::ptr::null_mut())
                     }
                 }
 
@@ -1190,6 +1202,12 @@ pub fn string_enum(_attr_input: TokenStream, item: TokenStream) -> TokenStream {
             }
         }
 
+        impl ::napi::bindgen_prelude::ValidateNapiValue for #enum_ident {
+            unsafe fn validate(__enunion_env: ::napi::sys::napi_env, __enunion_napi_val: ::napi::sys::napi_value) -> ::napi::bindgen_prelude::Result<::napi::sys::napi_value> {
+                <Self as ::napi::bindgen_prelude::FromNapiValue>::from_napi_value(__enunion_env, __enunion_napi_val).map(|_| ::std::ptr::null_mut())
+            }
+        }
+
         impl ::napi::bindgen_prelude::ToNapiValue for #enum_ident {
             unsafe fn to_napi_value(__enunion_env: ::napi::sys::napi_env, val: Self) -> ::napi::bindgen_prelude::Result<::napi::sys::napi_value> {
                 match &val {
@@ -1397,6 +1415,12 @@ pub fn literal_typed_struct(item: TokenStream) -> TokenStream {
                     }
                 )*
                 Ok(Self)
+            }
+        }
+
+        impl ::napi::bindgen_prelude::ValidateNapiValue for #name {
+            unsafe fn validate(__enunion_env: ::napi::sys::napi_env, __enunion_napi_val: ::napi::sys::napi_value) -> ::napi::bindgen_prelude::Result<::napi::sys::napi_value> {
+                <Self as ::napi::bindgen_prelude::FromNapiValue>::from_napi_value(__enunion_env, __enunion_napi_val).map(|_| ::std::ptr::null_mut())
             }
         }
 
