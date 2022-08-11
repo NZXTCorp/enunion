@@ -552,6 +552,7 @@ pub fn enunion(attr_input: TokenStream, item: TokenStream) -> TokenStream {
                 }
             })
             .collect::<proc_macro2::TokenStream>();
+        let stringify_json_value = stringify_json_value();
         quote! {
             #e_altered
 
@@ -567,7 +568,11 @@ pub fn enunion(attr_input: TokenStream, item: TokenStream) -> TokenStream {
                         let ty: Option<#discriminant_type_dynamic> = o.get(#discriminant_field_name_js_case)?;
                         match #ty_compare_expr {
                             #from_arms
-                            _ => Err(::napi::Error::from_reason(format!("JS object provided was not a valid {}, ty is {:?}", stringify!(#enum_ident), ty)))
+                            _ => {
+                                let json_value = &o;
+                                let full_value = #stringify_json_value;
+                                Err(::napi::Error::from_reason(format!("JS object provided was not a valid {}, {} = {:?} {}", stringify!(#enum_ident), #discriminant_field_name_js_case, ty, full_value)))
+                            }
                         }
                     }
                 }
@@ -794,6 +799,7 @@ pub fn enunion(attr_input: TokenStream, item: TokenStream) -> TokenStream {
                 }
             })
             .collect::<proc_macro2::TokenStream>();
+        let stringify_json_value = stringify_json_value();
         quote! {
             #e_altered
 
@@ -807,7 +813,9 @@ pub fn enunion(attr_input: TokenStream, item: TokenStream) -> TokenStream {
                     unsafe fn from_napi_value(__enunion_env: ::napi::sys::napi_env, __enunion_napi_val: ::napi::sys::napi_value) -> ::napi::bindgen_prelude::Result<Self> {
                         let mut errs = Vec::new();
                         #from_attempts
-                        Err(::napi::Error::from_reason(format!("JS object provided was not a valid {}, no variants deserialized correctly. Errors: {:#?}", stringify!(#enum_ident), errs)))
+                        let json_value = <::napi::JsUnknown as ::napi::NapiValue>::from_raw(__enunion_env, __enunion_napi_val).unwrap();
+                        let full_value = #stringify_json_value;
+                        Err(::napi::Error::from_reason(format!("JS object provided was not a valid {}, no variants deserialized correctly. {} Errors: {:#?}", stringify!(#enum_ident), full_value, errs)))
                     }
                 }
 
@@ -1396,6 +1404,7 @@ pub fn literal_typed_struct(item: TokenStream) -> TokenStream {
             }
         }
     });
+    let stringify_json_value = stringify_json_value();
     quote! {
         pub struct #name;
 
@@ -1406,11 +1415,15 @@ pub fn literal_typed_struct(item: TokenStream) -> TokenStream {
                     match #get_field {
                         Some(value) => {
                             if !matches!(value, #consts) {
-                                return Err(::napi::Error::from_reason(format!("Value \"{}\" was found, but it wasn't equal to {:?}", #js_names, #consts)));
+                                let json_value = &o;
+                                let full_value = #stringify_json_value;
+                                return Err(::napi::Error::from_reason(format!("Value \"{}\" was found, but it wasn't equal to {:?} {}", #js_names, #consts, full_value)));
                             }
                         }
                         None => {
-                            return Err(::napi::Error::from_reason(format!("Value \"{}\" was undefined or null.", #js_names)));
+                            let json_value = &o;
+                            let full_value = #stringify_json_value;
+                            return Err(::napi::Error::from_reason(format!("Value \"{}\" was undefined or null. {}", #js_names, full_value)));
                         }
                     }
                 )*
@@ -1738,4 +1751,24 @@ impl Parse for FieldDescriptors {
 
 fn gen_ts_folder() -> PathBuf {
     PathBuf::from(var("CARGO_MANIFEST_DIR").unwrap()).join("enunion-generated-ts")
+}
+
+fn stringify_json_value() -> proc_macro2::TokenStream {
+    quote! {{
+        let e = ::napi::bindgen_prelude::Env::from_raw(__enunion_env);
+        let stringify_ret = e.get_global()
+            .and_then(|g| g.get_named_property::<::napi::JsObject>("JSON"))
+            .and_then(|j| j.get::<_, ::napi::JsFunction>("stringify"))
+            .transpose()
+            .and_then(|r| {
+              r.and_then(|f| f.call(None, &[json_value]))
+                .and_then(|u| u.coerce_to_string())
+                .and_then(|s| s.into_utf8())
+                .ok()
+            });
+        match stringify_ret.as_ref().map(|s| s.as_str()) {
+            Some(Ok(s)) => format!("full value: {}", s),
+            _ => String::new(),
+        }
+    }}
 }
