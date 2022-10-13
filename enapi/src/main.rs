@@ -21,12 +21,12 @@ fn main() {
     let specified_dts_index = args
         .iter()
         .enumerate()
-        .find_map(|(i, a)| (a.as_str() == "--dts").then(|| i));
+        .find_map(|(i, a)| (a.as_str() == "--dts").then_some(i));
     let specified_dts = specified_dts_index.and_then(|i| args.get(i + 1).cloned());
     let specified_js_index = args
         .iter()
         .enumerate()
-        .find_map(|(i, a)| (a.as_str() == "--js").then(|| i));
+        .find_map(|(i, a)| (a.as_str() == "--js").then_some(i));
     let specified_js = specified_js_index.and_then(|i| args.get(i + 1).cloned());
     #[cfg(target_os = "windows")]
     let build_exit_status = Command::new("cmd")
