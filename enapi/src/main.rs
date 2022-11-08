@@ -30,7 +30,7 @@ fn main() {
     let specified_js = specified_js_index.and_then(|i| args.get(i + 1).cloned());
     #[cfg(target_os = "windows")]
     let build_exit_status = Command::new("cmd")
-        .args(["/C", "napi"])
+        .args(["/C", "npx napi"])
         .args(args.into_iter())
         .spawn()
         .unwrap()
