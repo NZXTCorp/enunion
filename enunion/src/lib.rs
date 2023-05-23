@@ -301,7 +301,7 @@ pub fn enunion(attr_input: TokenStream, item: TokenStream) -> TokenStream {
                 (
                     types
                         .iter()
-                        .map(|ty| napi_derive_backend::ty_to_ts_type(ty, false, false).0)
+                        .map(|ty| napi_derive_backend::ty_to_ts_type(ty, false, false, false).0)
                         .chain((repr != DiscriminantRepr::None).then(|| {
                             format!(
                                 "{{ {}: typeof {} }}",
@@ -1495,7 +1495,7 @@ pub fn raw_ts(item: TokenStream) -> TokenStream {
         hasher.update(&input);
 
         // Use of a CJK dash here is intentional, since it's not a character that can be used in a cargo package name.
-        let ts_path = gen_ts_folder().join(&format!(
+        let ts_path = gen_ts_folder().join(format!(
             "{}ー{}ーraw_tsー{}ー{}.d.ts",
             var("CARGO_PKG_NAME").unwrap(),
             var("CARGO_PKG_VERSION").unwrap(),
