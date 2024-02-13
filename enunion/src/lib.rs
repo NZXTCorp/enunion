@@ -9,19 +9,20 @@ use std::fmt::Write as _;
 use std::fs::{create_dir_all, File};
 use std::io::Write;
 use std::path::PathBuf;
-use syn::token::{And, Bracket, Pound};
+use syn::token::And;
 use syn::{
     parse::{Parse, ParseStream},
     punctuated::Punctuated,
     spanned::Spanned,
-    token::{Brace, Comma, Pub},
-    AttrStyle, Attribute, Expr, ExprCall, ExprLit, ExprPath, Field, Fields, Ident, ItemEnum,
-    Lifetime, Lit, LitStr, Meta, MetaNameValue, Path, PathArguments, PathSegment, Token, Type,
-    TypePath, TypeReference, Variant, VisPublic,
+    token::{Comma, Pub},
+    Attribute, Expr, ExprCall, ExprLit, ExprPath, Field, Fields, Ident, ItemEnum, Lifetime, Lit,
+    LitStr, Meta, MetaNameValue, Path, PathArguments, PathSegment, Token, Type, TypePath,
+    TypeReference, Variant,
 };
 
 use convert_case::{Case, Casing};
 use sha2::Digest;
+use syn::Visibility;
 
 type ProcMacroErrors = Vec<(Span, String)>;
 
@@ -111,10 +112,10 @@ pub fn enunion(attr_input: TokenStream, item: TokenStream) -> TokenStream {
     let mut repr = None;
     let mut discriminant_field_name = None;
     let mut export_variant_types = None;
-    for MetaNameValue { path, lit, .. } in attr.items.iter() {
+    for MetaNameValue { path, value, .. } in attr.items.iter() {
         match path.get_ident().map(|i| i.to_string()).as_deref() {
-            Some("discriminant_repr") => match lit {
-                Lit::Str(s) => {
+            Some("discriminant_repr") => match value {
+                Expr::Lit(ExprLit { lit: Lit::Str(s), .. }) => {
                     match s.value().as_str() {
                         "i64" => {
                             repr = Some(DiscriminantRepr::I64);
@@ -142,14 +143,14 @@ pub fn enunion(attr_input: TokenStream, item: TokenStream) -> TokenStream {
                 _ => abort_call_site!("only string literals are supported for the discriminant_repr, please provide {}", SUPPORTED_REPR_TYPES)
             },
             Some("discriminant_field_name") =>
-                match lit {
-                    Lit::Str(s) => {
+                match value {
+                    Expr::Lit(ExprLit { lit: Lit::Str(s), .. })=> {
                         discriminant_field_name = Some(s.value());
                     }
                     _ => abort_call_site!("only string literals are supported for the discriminant_field_name, please provide a string")
                 },
-            Some("export_variant_types") => match lit {
-                Lit::Bool(b) => {
+            Some("export_variant_types") => match value {
+                Expr::Lit(ExprLit { lit: Lit::Bool(b), .. }) => {
                     export_variant_types = Some(b.value());
                 },
                 _ => abort_call_site!("only bool literals are supported for export_variant_types, please provide a bool")
@@ -271,13 +272,13 @@ pub fn enunion(attr_input: TokenStream, item: TokenStream) -> TokenStream {
     // This is the NAPI internal environment variable used to find the path to write TS definitions to. If it's set, then a new file is being generated.
     if var("TYPE_DEF_TMP_PATH").is_ok() {
         // Use of a CJK dash here is intentional, since it's not a character that can be used in a cargo package name.
-        let ts_path = gen_ts_folder().join(&format!(
+        let ts_path = gen_ts_folder().join(format!(
             "{}ー{}ー{}.d.ts",
             var("CARGO_PKG_NAME").unwrap(),
             var("CARGO_PKG_VERSION").unwrap(),
             enum_ident
         ));
-        let js_path = gen_ts_folder().join(&format!(
+        let js_path = gen_ts_folder().join(format!(
             "{}ー{}ー{}.js",
             var("CARGO_PKG_NAME").unwrap(),
             var("CARGO_PKG_VERSION").unwrap(),
@@ -358,7 +359,7 @@ pub fn enunion(attr_input: TokenStream, item: TokenStream) -> TokenStream {
         }
         let mut ts_f = File::create(&ts_path).expect("Failed to open TS output file");
         ts_f.write_all(ts.as_bytes()).unwrap();
-        let mut js_f = File::create(&js_path).expect("Failed to open JS output file");
+        let mut js_f = File::create(js_path).expect("Failed to open JS output file");
         js_f.write_all(js.as_bytes()).unwrap();
     }
     let const_idents = variants.iter().map(|v| &v.const_ident);
@@ -373,12 +374,9 @@ pub fn enunion(attr_input: TokenStream, item: TokenStream) -> TokenStream {
     let struct_fields = struct_variants_iter().map(|(_v, v_data)| {
         let mut pub_fields = v_data.fields.clone();
         for f in &mut pub_fields {
-            f.vis = VisPublic {
-                pub_token: Pub {
-                    span: Span::call_site(),
-                },
-            }
-            .into();
+            f.vis = Visibility::Public(Pub {
+                span: Span::call_site(),
+            });
         }
         // The trailing comma is important, because we're adding one more field.
         if !pub_fields.empty_or_trailing() {
@@ -390,7 +388,7 @@ pub fn enunion(attr_input: TokenStream, item: TokenStream) -> TokenStream {
     });
     let struct_attrs = struct_variants_iter().map(|(v, _v_data)| {
         let mut attrs = v.variant.attrs.clone();
-        attrs.retain(|a| a.path.get_ident().map(|i| i.to_string()).as_deref() != Some("enunion"));
+        attrs.retain(|a| a.path().get_ident().map(|i| i.to_string()).as_deref() != Some("enunion"));
         attrs
     });
     let variant_idents = variants.iter().map(|v| &v.variant.ident);
@@ -466,7 +464,7 @@ pub fn enunion(attr_input: TokenStream, item: TokenStream) -> TokenStream {
     // remove the `enunion` attributes from the resulting enum, they've been parsed.
     for v in &mut e_altered.variants {
         v.attrs.retain(|a| {
-            a.path
+            a.path()
                 .segments
                 .last()
                 .map(|i| i.ident.to_string())
@@ -853,16 +851,24 @@ pub fn enunion(attr_input: TokenStream, item: TokenStream) -> TokenStream {
 }
 
 fn write_docs(attrs: &[Attribute], prefix: &str, ts: &mut String) {
-    let docs: Option<MetaNameValue> = attrs
+    let docs: Option<&MetaNameValue> = attrs
         .iter()
-        .find(|a| a.path.get_ident().map(|i| i.to_string()).as_deref() == Some("doc"))
-        .and_then(|a| a.parse_meta().ok())
-        .and_then(|m| match m {
+        .find(|a| {
+            a.path()
+                .get_ident()
+                .as_ref()
+                .map(|&i| i == "doc")
+                .unwrap_or_default()
+        })
+        .and_then(|a| match &a.meta {
             Meta::NameValue(m) => Some(m),
             _ => None,
         });
     if let Some(docs) = docs {
-        if let Lit::Str(s) = docs.lit {
+        if let Expr::Lit(ExprLit {
+            lit: Lit::Str(s), ..
+        }) = &docs.value
+        {
             writeln!(ts, "{}/**", prefix).expect("Failed to write to TS output file");
             for line in s.value().lines() {
                 writeln!(ts, "{} * {}", prefix, line).expect("Failed to write to TS output file");
@@ -915,10 +921,11 @@ impl<'a> VariantComputedData<'a> {
             .attrs
             .iter()
             .find(|a| a
-                .path
+                .path()
                 .get_ident()
-                .map(ToString::to_string)
-                .as_deref() == Some("enunion")
+                .as_ref()
+                .map(|&i| i == "enunion")
+                .unwrap_or_default()
             )
             .map(|a| a.parse_args::<Args>().map_err(|e| (Span::call_site(), format!("Failed to parse enunion variant `{}` attribute input, please use field = \"value\" in a comma separated list. Check the documentation for examples. Error: {:?}", variant.ident, e))))
             .transpose()?;
@@ -926,14 +933,20 @@ impl<'a> VariantComputedData<'a> {
         if let Some(variant_args) = variant_args {
             for arg in variant_args.items {
                 match arg.path.get_ident().map(|i| i.to_string()).as_deref() {
-                    Some("discriminant_value") => match arg.lit {
-                        Lit::Str(s) => {
+                    Some("discriminant_value") => match arg.value {
+                        Expr::Lit(ExprLit {
+                            lit: Lit::Str(s), ..
+                        }) => {
                             discriminant_value = Some(s.value());
                         }
-                        Lit::Int(i) => {
+                        Expr::Lit(ExprLit {
+                            lit: Lit::Int(i), ..
+                        }) => {
                             discriminant_value = Some(i.base10_digits().to_string());
                         }
-                        Lit::Bool(b) => {
+                        Expr::Lit(ExprLit {
+                            lit: Lit::Bool(b), ..
+                        }) => {
                             discriminant_value = Some(b.value.to_string());
                         }
                         _ => {
@@ -1006,7 +1019,7 @@ impl<'a> VariantComputedData<'a> {
             ),
         };
         let compute_struct_variant = |fields: Punctuated<Field, Token!(,)>| {
-            let mut enum_field_tokens = fields
+            let enum_field_tokens = fields
                 .iter()
                 .map(|f| {
                     let ident = &f.ident;
@@ -1019,21 +1032,21 @@ impl<'a> VariantComputedData<'a> {
             struct_field_tokens.extend(quote! {
                 #discriminant_field_name: #const_ident,
             });
-            for t in &mut [&mut struct_field_tokens, &mut enum_field_tokens] {
-                let mut ret = proc_macro2::TokenStream::new();
-                let t_clone = t.clone();
-                Brace {
-                    span: Span::call_site(),
-                }
-                .surround(&mut ret, |ret| ret.extend(t_clone));
-                **t = ret;
-            }
+
             let struct_ident = format_ident!("{}{}", enum_ident, variant.ident);
             VariantData::Struct(VariantStructData {
                 fields,
                 struct_ident,
-                enum_field_tokens,
-                struct_field_tokens,
+                enum_field_tokens: quote! {
+                    {
+                        #enum_field_tokens
+                    }
+                },
+                struct_field_tokens: quote! {
+                    {
+                        #struct_field_tokens
+                    }
+                },
             })
         };
         let data = match &variant.fields {
@@ -1093,7 +1106,13 @@ pub fn string_enum(_attr_input: TokenStream, item: TokenStream) -> TokenStream {
         let variant_args = v
             .attrs
             .iter()
-            .find(|a| a.path.get_ident().map(ToString::to_string).as_deref() == Some("string_enum"))
+            .find(|a| {
+                a.path()
+                    .get_ident()
+                    .as_ref()
+                    .map(|&i| i == "string_enum")
+                    .unwrap_or_default()
+            })
             .map(|a| a.parse_args::<Args>())
             .transpose();
         let variant_args = match variant_args {
@@ -1105,20 +1124,24 @@ pub fn string_enum(_attr_input: TokenStream, item: TokenStream) -> TokenStream {
         if let Some(variant_args) = variant_args {
             for arg in variant_args.items {
                 match arg.path.get_ident().map(|i| i.to_string()).as_deref() {
-                    Some("key") => match arg.lit {
-                        Lit::Str(s) => {
+                    Some("key") => match arg.value {
+                        Expr::Lit(ExprLit {
+                            lit: Lit::Str(s), ..
+                        }) => {
                             key = Some(s.value());
                         }
                         _ => {
-                            abort!(arg.lit.span(), "literal type provided is not supported, please use a string.");
+                            abort!(arg.value.span(), "literal type provided is not supported, please use a string.");
                         }
                     },
-                    Some("value") => match arg.lit {
-                        Lit::Str(s) => {
+                    Some("value") => match arg.value {
+                        Expr::Lit(ExprLit {
+                            lit: Lit::Str(s), ..
+                        }) => {
                             value = Some(s.value());
                         }
                         _ => {
-                            abort!(arg.lit.span(), "literal type provided is not supported, please use a string.");
+                            abort!(arg.value.span(), "literal type provided is not supported, please use a string.");
                         }
                     },
                     _ => abort_call_site!(
@@ -1140,14 +1163,14 @@ pub fn string_enum(_attr_input: TokenStream, item: TokenStream) -> TokenStream {
         // Use of a CJK dash here is intentional, since it's not a character that can be used in a cargo package name.
 
         // Add some leading underscores so these will sort to the top (important for JS code)
-        let ts_path = gen_ts_folder().join(&format!(
+        let ts_path = gen_ts_folder().join(format!(
             "_{}ー{}ー{}.d.ts",
             var("CARGO_PKG_NAME").unwrap(),
             var("CARGO_PKG_VERSION").unwrap(),
             enum_ident
         ));
 
-        let js_path = gen_ts_folder().join(&format!(
+        let js_path = gen_ts_folder().join(format!(
             "_{}ー{}ー{}.js",
             var("CARGO_PKG_NAME").unwrap(),
             var("CARGO_PKG_VERSION").unwrap(),
@@ -1173,7 +1196,7 @@ pub fn string_enum(_attr_input: TokenStream, item: TokenStream) -> TokenStream {
         writeln!(ts, "}}").expect("Failed to write to TS output file");
         let mut ts_f = File::create(&ts_path).expect("Failed to open TS output file");
         ts_f.write_all(ts.as_bytes()).unwrap();
-        let mut js_f = File::create(&js_path).expect("Failed to open JS output file");
+        let mut js_f = File::create(js_path).expect("Failed to open JS output file");
         js_f.write_all(js.as_bytes()).unwrap();
     }
     let (keys, values): (Vec<_>, Vec<_>) = str_literals.into_iter().unzip();
@@ -1189,7 +1212,7 @@ pub fn string_enum(_attr_input: TokenStream, item: TokenStream) -> TokenStream {
     // remove the `string_enum` attributes from the resulting enum, they've been parsed.
     for v in &mut e_altered.variants {
         v.attrs.retain(|a| {
-            a.path
+            a.path()
                 .segments
                 .last()
                 .map(|i| i.ident.to_string())
@@ -1326,33 +1349,13 @@ pub fn literal_typed_struct(item: TokenStream) -> TokenStream {
     };
     let fields = fd_data.iter().map(|a| {
         let ts_type = LitStr::new(&a.value_ts, Span::call_site());
-        Field {
-            attrs: vec![Attribute {
-                pound_token: Pound {
-                    spans: [Span::call_site()],
-                },
-                style: AttrStyle::Outer,
-                bracket_token: Bracket {
-                    span: Span::call_site(),
-                },
-                path: Path {
-                    leading_colon: None,
-                    segments: Punctuated::from_iter(Some(PathSegment {
-                        ident: Ident::new("napi", Span::call_site()),
-                        arguments: PathArguments::None,
-                    })),
-                },
-                tokens: quote! { (ts_type = #ts_type) },
-            }],
-            vis: VisPublic {
-                pub_token: Pub {
-                    span: Span::call_site(),
-                },
-            }
-            .into(),
-            ident: Some(a.desc.ident.clone()),
-            colon_token: Some(a.desc.colon),
-            ty: a.desc.ty.clone(),
+
+        let ident = &a.desc.ident;
+        let ty = &a.desc.ty;
+
+        quote! {
+            #[napi(ts_type = #ts_type)]
+            pub #ident: #ty
         }
     });
     let js_names = fd_data
@@ -1711,7 +1714,6 @@ fn ts_value(
 
 struct FieldDescriptor {
     pub ident: Ident,
-    pub colon: Token!(:),
     pub ty: Type,
     pub value: Expr,
 }
@@ -1719,16 +1721,11 @@ struct FieldDescriptor {
 impl Parse for FieldDescriptor {
     fn parse(input: ParseStream) -> syn::Result<Self> {
         let ident = input.parse()?;
-        let colon = input.parse()?;
+        let _colon: Token!(:) = input.parse()?;
         let ty = input.parse()?;
         let _: Token!(=) = input.parse()?;
         let value = input.parse()?;
-        Ok(Self {
-            ident,
-            colon,
-            ty,
-            value,
-        })
+        Ok(Self { ident, ty, value })
     }
 }
 
