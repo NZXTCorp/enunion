@@ -851,31 +851,36 @@ pub fn enunion(attr_input: TokenStream, item: TokenStream) -> TokenStream {
 }
 
 fn write_docs(attrs: &[Attribute], prefix: &str, ts: &mut String) {
-    let docs: Option<&MetaNameValue> = attrs
+    let docs: Vec<&MetaNameValue> = attrs
         .iter()
-        .find(|a| {
-            a.path()
-                .get_ident()
-                .as_ref()
-                .map(|&i| i == "doc")
-                .unwrap_or_default()
+        .filter_map(|a| {
+            if a.path().get_ident()? != "doc" {
+                return None;
+            }
+            match &a.meta {
+                Meta::NameValue(m) => Some(m),
+                _ => None,
+            }
         })
-        .and_then(|a| match &a.meta {
-            Meta::NameValue(m) => Some(m),
-            _ => None,
-        });
-    if let Some(docs) = docs {
+        .collect::<Vec<_>>();
+    if docs.is_empty() {
+        return;
+    }
+    writeln!(ts, "{}/**", prefix).expect("Failed to write to TS output file");
+    for doc in docs {
         if let Expr::Lit(ExprLit {
             lit: Lit::Str(s), ..
-        }) = &docs.value
+        }) = &doc.value
         {
-            writeln!(ts, "{}/**", prefix).expect("Failed to write to TS output file");
+            if s.value().is_empty() {
+                writeln!(ts, "{} *", prefix).expect("Failed to write to TS output file");
+            }
             for line in s.value().lines() {
                 writeln!(ts, "{} * {}", prefix, line).expect("Failed to write to TS output file");
             }
-            writeln!(ts, "{} */", prefix).expect("Failed to write to TS output file");
         }
     }
+    writeln!(ts, "{} */", prefix).expect("Failed to write to TS output file");
 }
 
 #[allow(clippy::large_enum_variant)] // Large variant is most common
