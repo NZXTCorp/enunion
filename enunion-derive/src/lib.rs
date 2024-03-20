@@ -563,7 +563,7 @@ pub fn enunion(attr_input: TokenStream, item: TokenStream) -> TokenStream {
             })
             .collect::<proc_macro2::TokenStream>();
 
-            quote! {
+        quote! {
             #e_altered
 
             #[allow(non_snake_case)]
@@ -715,41 +715,45 @@ pub fn enunion(attr_input: TokenStream, item: TokenStream) -> TokenStream {
                 }
             )*
         };
-        let from_attempts = variants.iter()
+        let from_impl = variants.iter()
             .map(|v| {
                 match &v.data {
                     VariantData::Struct(s) => {
                         let s_ident = &s.struct_ident;
-                        let v_ident = &v.variant.ident;
                         quote! {
                             match <#s_ident as ::napi::bindgen_prelude::FromNapiValue>::from_napi_value(__enunion_env, __enunion_napi_val) {
                                 Ok(v) => {
                                     return Ok(<#s_ident as Into<super::#enum_ident>>::into(v));
                                 },
-                                Err(e) => {
-                                    errs.push((format!("Error deserializing variant {}", stringify!(#v_ident)), e));
-                                },
+                                Err(_) => {},
                             }
                         }
                     },
-                    VariantData::Transparent {types} => {
+                    VariantData::Transparent { types } => {
                         let field_range = (0..types.len()).map(|i| format_ident!("_{}", i)).collect::<Vec<_>>();
                         let v_ident = &v.variant.ident;
-                        quote! {
-                            'block: {
-                                #(
-                                    let #field_range = match <#types as ::napi::bindgen_prelude::FromNapiValue>::from_napi_value(__enunion_env, __enunion_napi_val) {
-                                        Ok(#field_range) => #field_range,
-                                        Err(e) => {
-                                            errs.push((format!("Error deserializing variant {}", stringify!(#v_ident)), e));
-                                            break 'block;
-                                        }
+                        let matches = types
+                            .iter()
+                            .enumerate()
+                            .map(|(i, ty)| {
+                                let ident = format_ident!("_{}", i);
+
+                                quote! {
+                                    let #ident = match <#ty as ::napi::bindgen_prelude::FromNapiValue>::from_napi_value(__enunion_env, __enunion_napi_val) {
+                                        Ok(#ident) => #ident,
+                                        Err(_) => break 'matcher,
                                     };
-                                )*
+                                }
+                            })
+                            .collect::<proc_macro2::TokenStream>();
+
+                        quote! {
+                            'matcher: {
+                                #matches
                                 return Ok(super::#enum_ident::#v_ident ( #(#field_range),* ));
                             }
                         }
-                    },
+                    }
                 }
             })
             .collect::<proc_macro2::TokenStream>();
@@ -817,11 +821,19 @@ pub fn enunion(attr_input: TokenStream, item: TokenStream) -> TokenStream {
 
                 impl ::napi::bindgen_prelude::FromNapiValue for super::#enum_ident {
                     unsafe fn from_napi_value(__enunion_env: ::napi::sys::napi_env, __enunion_napi_val: ::napi::sys::napi_value) -> ::napi::bindgen_prelude::Result<Self> {
-                        let mut errs = Vec::new();
-                        #from_attempts
+                        #from_impl;
+
                         let json_value = <::napi::JsUnknown as ::napi::NapiValue>::from_raw(__enunion_env, __enunion_napi_val).unwrap();
                         let full_value = ::enunion::stringify_json_value(__enunion_env, json_value);
-                        Err(::napi::Error::from_reason(format!("JS object provided was not a valid {}, no variants deserialized correctly. {} Errors: {:#?}", stringify!(#enum_ident), full_value, errs)))
+                        Err(
+                            ::napi::Error::from_reason(
+                                format!(
+                                    "JS object provided was not a valid {}, no variants deserialized correctly. {}",
+                                    stringify!(#enum_ident),
+                                    full_value
+                                )
+                            )
+                        )
                     }
                 }
 
