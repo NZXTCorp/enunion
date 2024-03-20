@@ -482,7 +482,11 @@ pub fn enunion(attr_input: TokenStream, item: TokenStream) -> TokenStream {
                     VariantData::Struct(data) => {
                         let struct_ident = &data.struct_ident;
                         quote! {
-                            Some(#const_ident) => Ok(<#struct_ident as Into<super::#enum_ident>>::into(#struct_ident::try_from(o)?)),
+                            Some(#const_ident) => Ok(
+                                <#struct_ident as Into<super::#enum_ident>>::into(
+                                    #struct_ident::try_from(o)?
+                                )
+                            ),
                         }
                     }
                     VariantData::Transparent { types } => {
