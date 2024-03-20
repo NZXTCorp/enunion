@@ -724,15 +724,13 @@ pub fn enunion(attr_input: TokenStream, item: TokenStream) -> TokenStream {
                         let field_range = (0..types.len()).map(|i| format_ident!("_{}", i)).collect::<Vec<_>>();
                         let v_ident = &v.variant.ident;
                         quote! {
-                            // This is a loop that's guaranteed to execute exactly once.
-                            // Mostly I just wanted to be able to use the `break` keyword.
-                            for _ in Some(()) {
+                            'block: {
                                 #(
                                     let #field_range = match <#types as ::napi::bindgen_prelude::FromNapiValue>::from_napi_value(__enunion_env, __enunion_napi_val) {
                                         Ok(#field_range) => #field_range,
                                         Err(e) => {
                                             errs.push((format!("Error deserializing variant {}", stringify!(#v_ident)), e));
-                                            break;
+                                            break 'block;
                                         }
                                     };
                                 )*
