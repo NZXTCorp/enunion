@@ -6,7 +6,7 @@ use std::process::Command;
 
 fn main() {
     let args = env::args().skip(1).collect::<Vec<_>>();
-    let is_build = args.get(0).map(|s| s == "build").unwrap_or(false);
+    let is_build = args.first().map(|s| s == "build").unwrap_or(false);
     let is_platform = args.iter().any(|a| a.as_str() == "--platform");
     if is_build {
         let _ = std::fs::remove_dir_all("enunion-generated-ts");
@@ -32,7 +32,7 @@ fn main() {
     let build_exit_status = Command::new("powershell")
         .args(["-Command", "npx"])
         .arg("napi")
-        .args(args.into_iter())
+        .args(args)
         .spawn()
         .unwrap()
         .wait()
@@ -40,7 +40,7 @@ fn main() {
     #[cfg(not(target_os = "windows"))]
     let build_exit_status = Command::new("npx")
         .arg("napi")
-        .args(args.into_iter())
+        .args(args)
         .spawn()
         .unwrap()
         .wait()
