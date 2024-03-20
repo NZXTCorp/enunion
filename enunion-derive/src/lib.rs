@@ -485,26 +485,32 @@ pub fn enunion(attr_input: TokenStream, item: TokenStream) -> TokenStream {
                             Some(#const_ident) => Ok(<#struct_ident as Into<super::#enum_ident>>::into(#struct_ident::try_from(o)?)),
                         }
                     }
-                    VariantData::Transparent { types} => {
+                    VariantData::Transparent { types } => {
+                        let matcher = types
+                            .iter()
+                            .enumerate()
+                            .map(|(i, ty)| {
+                                let ident = format_ident!("_{}", i);
+
+                                quote! {
+                                    let #ident = match <#ty as ::napi::bindgen_prelude::FromNapiValue>::from_napi_value(__enunion_env, __enunion_napi_val) {
+                                        Ok(#ident) => #ident,
+                                        Err(e) => break 'matcher Err(e),
+                                    };
+                                }
+                            })
+                            .collect::<proc_macro2::TokenStream>();
+
                         let field_range = (0..types.len()).map(|i| format_ident!("_{}", i)).collect::<Vec<_>>();
+
                         quote! {
-                            Some(#const_ident) => match (
-                                #(
-                                    <#types as ::napi::bindgen_prelude::FromNapiValue>::from_napi_value(__enunion_env, __enunion_napi_val)
-                                ),*
-                            ) {
-                                ( #(Ok(#field_range)),* ) => {
+                            Some(#const_ident) => {
+                                let r = 'matcher: {
+                                    #matcher
                                     Ok(super::#enum_ident::#v_ident ( #(#field_range),* ))
-                                }
-                                ( #(#field_range),* ) => {
-                                    let mut errs = Vec::new();
-                                    #(
-                                        if let Err(e) = #field_range {
-                                            errs.push(e);
-                                        }
-                                    )*
-                                    Err(::napi::Error::from_reason(format!("JS object provided was not a valid {}, discriminant is {:?}, but encountered errors deserializing as that type {:?}", stringify!(#enum_ident), ty, errs)))
-                                }
+                                };
+
+                                r.map_err(|e| ::napi::Error::from_reason(format!("JS object provided was not a valid {}, discriminant is {:?}, but encountered errors deserializing as that type: {:?}", stringify!(#enum_ident), ty, e)))
                             }
                         }
                     }
