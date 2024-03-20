@@ -30,3 +30,17 @@ where
         .into_utf8()
         .ok()
 }
+
+#[doc(hidden)]
+pub fn merge_objects(target: &mut JsObject, sources: &[JsObject]) -> napi::Result<()> {
+    for source in sources {
+        for key in JsObject::keys(source)? {
+            target.set_named_property::<napi::JsUnknown>(
+                &key,
+                source.get_named_property::<napi::JsUnknown>(&key)?,
+            )?;
+        }
+    }
+
+    Ok(())
+}
