@@ -1234,9 +1234,10 @@ pub fn string_enum(_attr_input: TokenStream, item: TokenStream) -> TokenStream {
 
         impl ::napi::bindgen_prelude::ToNapiValue for #enum_ident {
             unsafe fn to_napi_value(__enunion_env: ::napi::sys::napi_env, val: Self) -> ::napi::bindgen_prelude::Result<::napi::sys::napi_value> {
-                match &val {
-                    #(#enum_ident::#variant_idents => ::napi::bindgen_prelude::ToNapiValue::to_napi_value(__enunion_env, #values),)*
-                }
+                let s = match &val {
+                    #(#enum_ident::#variant_idents => #values,)*
+                };
+                ::napi::bindgen_prelude::ToNapiValue::to_napi_value(__enunion_env, s)
             }
         }
 
@@ -1247,38 +1248,6 @@ pub fn string_enum(_attr_input: TokenStream, item: TokenStream) -> TokenStream {
 
             fn value_type() -> ::napi::bindgen_prelude::ValueType {
                 ::napi::bindgen_prelude::ValueType::String
-            }
-        }
-
-        impl ::std::fmt::Display for #enum_ident {
-            fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::result::Result<(), ::std::fmt::Error> {
-                write!(f, "{}", <Self as ::std::convert::AsRef<str>>::as_ref(self))
-            }
-        }
-
-        impl ::std::convert::AsRef<str> for #enum_ident {
-            fn as_ref(&self) -> &str {
-                match self {
-                    #(#enum_ident::#variant_idents => #values,)*
-                }
-            }
-        }
-
-        impl ::std::convert::From<#enum_ident> for &'static str {
-            fn from(e: #enum_ident) -> Self {
-                match e {
-                    #(#enum_ident::#variant_idents => #values,)*
-                }
-            }
-        }
-
-        impl ::std::str::FromStr for #enum_ident {
-            type Err = String;
-            fn from_str(s: &str) -> ::std::result::Result<Self, Self::Err> {
-                match s {
-                    #(#values => Ok(#enum_ident::#variant_idents),)*
-                    _ => Err(format!("string provided was not a valid {}, string is {:?}", stringify!(#enum_ident), s))
-                }
             }
         }
 
