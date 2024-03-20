@@ -8,12 +8,12 @@ crate-type = ["cdylib"]
 
 [dependencies]
 # Default enable napi4 feature, see https://nodejs.org/api/n-api.html#node-api-version-matrix
-napi = { version = "2.12.6", default-features = false, features = ["napi4"] }
-napi-derive = "2.12.5"
+napi = { version = "2.16.0", default-features = false, features = ["napi4"] }
+napi-derive = "2.16.0"
 enunion = { path = "../enunion" }
 
 [build-dependencies]
-napi-build = "2.0.1"
+napi-build = "2.1.2"
 
 [profile.release]
 lto = true
