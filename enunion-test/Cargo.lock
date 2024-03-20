@@ -91,6 +91,7 @@ name = "enunion"
 version = "0.1.0"
 dependencies = [
  "enunion-derive",
+ "napi",
 ]
 
 [[package]]
