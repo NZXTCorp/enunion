@@ -513,8 +513,7 @@ pub fn enunion(attr_input: TokenStream, item: TokenStream) -> TokenStream {
                         match #ty_compare_expr {
                             #from_arms
                             _ => {
-                                let json_value = &o;
-                                let full_value = ::enunion::stringify_json_value(__enunion_env, json_value);
+                                let full_value = ::enunion::stringify_json_value(__enunion_env, &o);
                                 Err(::napi::Error::from_reason(format!("JS object provided was not a valid {}, {} = {:?} {}", stringify!(#enum_ident), #discriminant_field_name_js_case, ty, full_value)))
                             }
                         }
@@ -1261,39 +1260,31 @@ pub fn string_enum(_attr_input: TokenStream, item: TokenStream) -> TokenStream {
 #[proc_macro]
 #[proc_macro_error::proc_macro_error]
 pub fn literal_typed_struct(item: TokenStream) -> TokenStream {
-    let input_data = syn::parse::<FieldDescriptors>(item)
-        .unwrap_or_else(|e| abort_call_site!("Failed to parse literal_typed_struct input {:?}", e));
+    let input_data = parse_macro_input!(item as FieldDescriptors);
     let name = input_data.struct_ident;
     let mod_name = format_ident!(
         "__enunion_literal_struct_{}",
-        &&name.to_string().to_case(Case::Snake)
+        name.to_string().to_case(Case::Snake)
     );
     let fd_data = {
         let mut errs = Vec::new();
         let mut variants = Vec::new();
-        let iter = input_data
-            .values
-            .iter()
-            .map(FieldDescriptorData::new)
-            .map(|r| match r {
+        for r in input_data.values.iter().map(FieldDescriptorData::new) {
+            match r {
                 Ok(v) => variants.push(v),
-                Err(e) => errs.push(e),
-            });
-        for _ in iter {}
-        if !errs.is_empty() {
-            let mut errs = errs.into_iter().flatten().peekable();
-            while let Some(err) = errs.next() {
-                if errs.peek().is_some() {
-                    emit_error!(err.0, "{}", err.1);
-                } else {
-                    abort!(err.0, "{}", err.1);
-                }
+                Err(e) => errs.extend(e),
             }
-            unreachable!()
-        } else {
-            variants
         }
+
+        if let [first_errs @ .., last_err] = &errs[..] {
+            for err in first_errs {
+                emit_error!(err.0, "{}", err.1);
+            }
+            abort!(last_err.0, "{}", last_err.1);
+        }
+        variants
     };
+
     let fields = fd_data.iter().map(|a| {
         let ts_type = LitStr::new(&a.value_ts, Span::call_site());
 
@@ -1365,14 +1356,12 @@ pub fn literal_typed_struct(item: TokenStream) -> TokenStream {
                     match #get_field {
                         Some(value) => {
                             if !matches!(value, #consts) {
-                                let json_value = &o;
-                                let full_value = ::enunion::stringify_json_value(__enunion_env, json_value);
+                                let full_value = ::enunion::stringify_json_value(__enunion_env, &o);
                                 return Err(::napi::Error::from_reason(format!("Value \"{}\" was found, but it wasn't equal to {:?} {}", #js_names, #consts, full_value)));
                             }
                         }
                         None => {
-                            let json_value = &o;
-                            let full_value = ::enunion::stringify_json_value(__enunion_env, json_value);
+                            let full_value = ::enunion::stringify_json_value(__enunion_env, &o);
                             return Err(::napi::Error::from_reason(format!("Value \"{}\" was undefined or null. {}", #js_names, full_value)));
                         }
                     }
