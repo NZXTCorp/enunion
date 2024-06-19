@@ -1,13 +1,4 @@
 import {
-  DEFAULT_FOO_TYPE_BAR,
-  DEFAULT_FOO_TYPE_ZOODLE,
-  FOO_BOOL_TYPE_BAR,
-  FOO_ENUM_STR_TYPE_BAR,
-  FOO_ENUM_TYPE_BAR,
-  FOO_NEW_TYPE_BAR,
-  FOO_STRING_TYPE_BAR,
-  FOO_TYPE_BAZ,
-  FOO_TYPE_UNION_VARIANT,
   FooNoDiscriminant,
   StringTest,
   takeFoo,
@@ -27,7 +18,8 @@ import {
   takeLiteralDiscriminatedEnunion4,
   takeLiteralStructs,
   takeStringTest,
-  FOO_WITH_KEYWORD_FIELD_NAME_TYPE_BAZ,
+  FooEnumDiscriminant,
+  FooEnumStrDiscriminant,
 } from "../index";
 
 it("calls takeStringTest", () => {
@@ -35,27 +27,24 @@ it("calls takeStringTest", () => {
 });
 
 it("calls takeFooDefault", () => {
-  expect(
-    takeFooDefault({ defaultFooType: DEFAULT_FOO_TYPE_BAR }).defaultFooType
-  ).toBe(DEFAULT_FOO_TYPE_ZOODLE);
+  expect(takeFooDefault({ defaultFooType: 0 }).defaultFooType).toBe(2);
 });
 
 it("calls takeFooEnum", () => {
-  expect(takeFooEnum({ fooEnumType: FOO_ENUM_TYPE_BAR }).fooEnumType).toBe(
-    FOO_ENUM_TYPE_BAR
-  );
+  expect(
+    takeFooEnum({ fooEnumType: FooEnumDiscriminant.Bar }).fooEnumType
+  ).toBe(FooEnumDiscriminant.Bar);
 });
 
 it("calls takeFooBool", () => {
-  expect(takeFooBool({ fooBoolType: FOO_BOOL_TYPE_BAR }).fooBoolType).toBe(
-    FOO_BOOL_TYPE_BAR
-  );
+  expect(takeFooBool({ fooBoolType: true }).fooBoolType).toBe(true);
 });
 
 it("calls takeFooEnumStr", () => {
   expect(
-    takeFooEnumStr({ fooEnumStrType: FOO_ENUM_STR_TYPE_BAR }).fooEnumStrType
-  ).toBe(FOO_ENUM_STR_TYPE_BAR);
+    takeFooEnumStr({ fooEnumStrType: FooEnumStrDiscriminant.Bar })
+      .fooEnumStrType
+  ).toBe(FooEnumStrDiscriminant.Bar);
 });
 
 it("calls takeFooNoDiscriminant", () => {
@@ -75,19 +64,17 @@ it("calls takeFooNoDiscriminantTransparentOneField", () => {
 
 it("calls takeFooNoDiscriminantTransparentManyStructs", () => {
   let input: FooNoDiscriminant = {
-    newType: FOO_NEW_TYPE_BAR,
-    fooStringType: FOO_STRING_TYPE_BAR,
+    newType: 1,
+    fooStringType: "Bar",
   };
   expect(takeFooNoDiscriminantTransparentManyStructs(input)).toEqual({
-    newType: FOO_NEW_TYPE_BAR,
-    fooStringType: FOO_STRING_TYPE_BAR,
-  });
+    newType: 1,
+    fooStringType: "Bar",
+  } as FooNoDiscriminant);
 });
 
 it("calls takeFooString", () => {
-  expect(
-    takeFooString({ fooStringType: FOO_STRING_TYPE_BAR }).fooStringType
-  ).toBe(FOO_STRING_TYPE_BAR);
+  expect(takeFooString({ fooStringType: "Bar" }).fooStringType).toBe("Bar");
 });
 
 it("calls takeFoo", () => {
@@ -96,10 +83,10 @@ it("calls takeFoo", () => {
     b: 2,
     c: "Hello from TypeScript",
     myMultiWordField: 2,
-    fooType: FOO_TYPE_BAZ,
+    fooType: 5,
   });
-  expect(r.fooType).toBe(FOO_TYPE_BAZ);
-  if (r.fooType === FOO_TYPE_BAZ) {
+  expect(r.fooType).toBe(5);
+  if (r.fooType === 5) {
     expect(r.a).toBe(1);
     expect(r.b).toBe(2);
     expect(r.c).toBe("Hello from Rust");
@@ -113,10 +100,10 @@ it("calls takeFooKeywordFieldName", () => {
     b: 2,
     c: "Hello from TypeScript",
     myMultiWordField: 2,
-    type: FOO_WITH_KEYWORD_FIELD_NAME_TYPE_BAZ,
+    type: 4,
   });
-  expect(r.type).toBe(FOO_WITH_KEYWORD_FIELD_NAME_TYPE_BAZ);
-  if (r.type === FOO_WITH_KEYWORD_FIELD_NAME_TYPE_BAZ) {
+  expect(r.type).toBe(4);
+  if (r.type === 4) {
     expect(r.a).toBe(1);
     expect(r.b).toBe(2);
     expect(r.c).toBe("Hello from Rust");
@@ -129,10 +116,10 @@ it("calls takeFooUnion", () => {
     test1: 0,
     test2: 3,
     test3: 2,
-    fooType: FOO_TYPE_UNION_VARIANT,
+    fooType: 0,
   });
-  expect(r.fooType).toBe(FOO_TYPE_UNION_VARIANT);
-  if (r.fooType === FOO_TYPE_UNION_VARIANT) {
+  expect(r.fooType).toBe(0);
+  if (r.fooType === 0) {
     expect(r.test1).toBe(1);
     expect(r.test2).toBe(2);
     expect(r.test3).toBe(3);
