@@ -448,7 +448,7 @@ pub fn enunion(attr_input: TokenStream, item: TokenStream) -> TokenStream {
                                     Ok(super::#enum_ident::#v_ident ( #(#field_range),* ))
                                 };
 
-                                r.map_err(|e| ::napi::Error::from_reason(format!("JS object provided was not a valid {}, discriminant is {:?}, but encountered errors deserializing as that type: {:?}", stringify!(#enum_ident), ty, e)))
+                                r.map_err(|e| ::enunion::fail_discriminant_msg(stringify!(#enum_ident), &format_args!("{ty:?}"), &e))
                             }
                         }
                     }
@@ -475,21 +475,19 @@ pub fn enunion(attr_input: TokenStream, item: TokenStream) -> TokenStream {
                         let const_ident = &v.const_ident;
                         quote! {
                             super::#enum_ident::#variant_ident(#(#field_range),*) => {
-                                let env = unsafe { ::napi::Env::from_raw(__enunion_env) };
-                                let mut merged_object = env.create_object()?;
-                                let sources = [#(
-                                    unsafe {
-                                        <::napi::JsObject as ::napi::NapiValue>::from_raw(
+                                unsafe {
+                                    let env = ::napi::Env::from_raw(__enunion_env);
+                                    let mut merged_object = env.create_object()?;
+                                    let sources = [#(
+                                        ::enunion::intersection_type_as_js_object::<#types>(
                                             __enunion_env,
-                                            <#types as ::napi::bindgen_prelude::ToNapiValue>::to_napi_value(
-                                                __enunion_env,
-                                                #field_range
-                                            )?).expect("enunion doesn't support intersection types where the members aren't objects")
-                                    }
-                                ),*];
-                                ::enunion::merge_objects(&mut merged_object, &sources)?;
-                                merged_object.set(#discriminant_field_name_js_case, #const_ident)?;
-                                Ok(<::napi::JsObject as ::napi::NapiRaw>::raw(&merged_object))
+                                            #field_range
+                                        )?
+                                    ),*];
+                                    ::enunion::merge_objects(&mut merged_object, &sources)?;
+                                    merged_object.set(#discriminant_field_name_js_case, #const_ident)?;
+                                    Ok(<::napi::JsObject as ::napi::NapiRaw>::raw(&merged_object))
+                                }
                             },
                         }
                     }
@@ -514,7 +512,11 @@ pub fn enunion(attr_input: TokenStream, item: TokenStream) -> TokenStream {
                             #from_arms
                             _ => {
                                 let full_value = ::enunion::stringify_json_value(__enunion_env, &o);
-                                Err(::napi::Error::from_reason(format!("JS object provided was not a valid {}, {} = {:?} {}", stringify!(#enum_ident), #discriminant_field_name_js_case, ty, full_value)))
+                                Err(::enunion::fail_invalid_ty_msg(
+                                    stringify!(#enum_ident),
+                                    #discriminant_field_name_js_case,
+                                    &format_args!("{ty:?}"),
+                                    &full_value))
                             }
                         }
                     }
@@ -581,10 +583,15 @@ pub fn enunion(attr_input: TokenStream, item: TokenStream) -> TokenStream {
                         fn try_from(o: ::napi::JsObject) -> ::std::result::Result<Self, Self::Error> {
                             let ty: Option<#discriminant_type_dynamic> = o.get(#discriminant_field_name_js_case)?;
                             if #ty_compare_expr != Some(#struct_const_idents) {
-                                return Err(::napi::Error::from_reason(format!("provided object was not {}", stringify!(#struct_idents))));
+                                return Err(::enunion::fail_on_wrong_discriminant(stringify!(#struct_idents)));
                             }
                             Ok(Self {
-                                #(#enum_field_idents: o.get(stringify!(#js_object_field_tokens))?.ok_or_else(|| ::napi::Error::from_reason(format!("conversion to {} failed, field {} is missing", stringify!(#struct_idents), stringify!(#js_object_field_tokens))))?,)*
+                                #(#enum_field_idents: o.get(
+                                    stringify!(#js_object_field_tokens))?
+                                    .ok_or_else(|| ::enunion::fail_on_missing_field(
+                                        stringify!(#struct_idents),
+                                        stringify!(#js_object_field_tokens)
+                                    ))?,)*
                                 #discriminant_field_name: #struct_const_idents,
                             })
                         }
@@ -659,9 +666,11 @@ pub fn enunion(attr_input: TokenStream, item: TokenStream) -> TokenStream {
                                 let ident = format_ident!("_{}", i);
 
                                 quote! {
-                                    let #ident = match <#ty as ::napi::bindgen_prelude::FromNapiValue>::from_napi_value(__enunion_env, __enunion_napi_val) {
-                                        Ok(#ident) => #ident,
-                                        Err(_) => break 'matcher,
+                                    let Ok(#ident) = <#ty as ::napi::bindgen_prelude::FromNapiValue>::from_napi_value(
+                                        __enunion_env,
+                                        __enunion_napi_val
+                                    ) else {
+                                        break 'matcher;
                                     };
                                 }
                             })
@@ -689,7 +698,11 @@ pub fn enunion(attr_input: TokenStream, item: TokenStream) -> TokenStream {
                             quote! { { .. } }
                         };
                         quote! {
-                            super::#enum_ident::#v_ident #enum_pattern_tokens => <#s_ident as ::napi::bindgen_prelude::ToNapiValue>::to_napi_value(__enunion_env, val.try_into().unwrap()),
+                            super::#enum_ident::#v_ident #enum_pattern_tokens =>
+                                <#s_ident as ::napi::bindgen_prelude::ToNapiValue>::to_napi_value(
+                                    __enunion_env,
+                                    val.try_into().unwrap()
+                                ),
                         }
                     },
                     VariantData::Transparent {types} => {
@@ -704,18 +717,14 @@ pub fn enunion(attr_input: TokenStream, item: TokenStream) -> TokenStream {
                             // This usage only really makes sense with objects. Otherwise it's not
                             // possible to merge these.
                             quote! {
-                                {
-                                    let env = unsafe { ::napi::Env::from_raw(__enunion_env) };
+                                unsafe {
+                                    let env = ::napi::Env::from_raw(__enunion_env);
                                     let mut merged_object = env.create_object()?;
                                     let sources = [#(
-                                        unsafe {
-                                            <::napi::JsObject as ::napi::NapiValue>::from_raw(
-                                                __enunion_env,
-                                                <#types as ::napi::bindgen_prelude::ToNapiValue>::to_napi_value(
-                                                    __enunion_env,
-                                                    #field_range
-                                                )?).expect("enunion doesn't support intersection types where the members aren't objects")
-                                        }
+                                        ::enunion::intersection_type_as_js_object::<#types>(
+                                            __enunion_env,
+                                            #field_range
+                                        )?
                                     ),*];
                                     ::enunion::merge_objects(&mut merged_object, &sources)?;
                                     Ok(<::napi::JsObject as ::napi::NapiRaw>::raw(&merged_object))
@@ -740,10 +749,16 @@ pub fn enunion(attr_input: TokenStream, item: TokenStream) -> TokenStream {
                 use super::*;
 
                 impl ::napi::bindgen_prelude::FromNapiValue for super::#enum_ident {
-                    unsafe fn from_napi_value(__enunion_env: ::napi::sys::napi_env, __enunion_napi_val: ::napi::sys::napi_value) -> ::napi::bindgen_prelude::Result<Self> {
+                    unsafe fn from_napi_value(
+                        __enunion_env: ::napi::sys::napi_env,
+                        __enunion_napi_val: ::napi::sys::napi_value
+                    ) -> ::napi::bindgen_prelude::Result<Self> {
                         #from_impl;
 
-                        let json_value = <::napi::JsUnknown as ::napi::NapiValue>::from_raw(__enunion_env, __enunion_napi_val).unwrap();
+                        let json_value = <::napi::JsUnknown as ::napi::NapiValue>::from_raw(
+                            __enunion_env,
+                            __enunion_napi_val
+                        ).unwrap();
                         let full_value = ::enunion::stringify_json_value(__enunion_env, json_value);
                         Err(
                             ::napi::Error::from_reason(
@@ -760,7 +775,10 @@ pub fn enunion(attr_input: TokenStream, item: TokenStream) -> TokenStream {
                 impl ::napi::bindgen_prelude::ValidateNapiValue for super::#enum_ident {}
 
                 impl ::napi::bindgen_prelude::ToNapiValue for super::#enum_ident {
-                    unsafe fn to_napi_value(__enunion_env: ::napi::sys::napi_env, val: Self) -> ::napi::bindgen_prelude::Result<::napi::sys::napi_value> {
+                    unsafe fn to_napi_value(
+                        __enunion_env: ::napi::sys::napi_env,
+                        val: Self
+                    ) -> ::napi::bindgen_prelude::Result<::napi::sys::napi_value> {
                         match val {
                             #into_arms
                         }
@@ -1208,7 +1226,7 @@ pub fn string_enum(_attr_input: TokenStream, item: TokenStream) -> TokenStream {
                 let v = <String as ::napi::bindgen_prelude::FromNapiValue>::from_napi_value(__enunion_env, __enunion_napi_val)?;
                 match v.as_str() {
                     #(#values => Ok(#enum_ident::#variant_idents),)*
-                    _ => Err(::napi::Error::from_reason(format!("JS string provided was not a valid {}, string is {:?}", stringify!(#enum_ident), v)))
+                    _ => Err(::enunion::fail_string_enum_discriminant(stringify!(#enum_ident), &v))
                 }
             }
         }
@@ -1349,19 +1367,27 @@ pub fn literal_typed_struct(item: TokenStream) -> TokenStream {
         pub struct #name;
 
         impl ::napi::bindgen_prelude::FromNapiValue for #name {
-            unsafe fn from_napi_value(__enunion_env: ::napi::sys::napi_env, __enunion_napi_val: ::napi::sys::napi_value) -> ::napi::bindgen_prelude::Result<Self> {
-                let o = <::napi::JsObject as ::napi::bindgen_prelude::FromNapiValue>::from_napi_value(__enunion_env, __enunion_napi_val)?;
+            unsafe fn from_napi_value(
+                __enunion_env: ::napi::sys::napi_env,
+                __enunion_napi_val: ::napi::sys::napi_value
+            ) -> ::napi::bindgen_prelude::Result<Self> {
+                let o = <::napi::JsObject as ::napi::bindgen_prelude::FromNapiValue>::from_napi_value(
+                    __enunion_env,
+                    __enunion_napi_val
+                )?;
                 #(
                     match #get_field {
                         Some(value) => {
                             if !matches!(value, #consts) {
                                 let full_value = ::enunion::stringify_json_value(__enunion_env, &o);
-                                return Err(::napi::Error::from_reason(format!("Value \"{}\" was found, but it wasn't equal to {:?} {}", #js_names, #consts, full_value)));
+                                return Err(::enunion::fail_incorrect_literal(
+                                    #js_names, &format_args!("{:?}", #consts), &full_value
+                                ));
                             }
                         }
                         None => {
                             let full_value = ::enunion::stringify_json_value(__enunion_env, &o);
-                            return Err(::napi::Error::from_reason(format!("Value \"{}\" was undefined or null. {}", #js_names, full_value)));
+                            return Err(::enunion::fail_nullish(#js_names, &full_value));
                         }
                     }
                 )*
@@ -1372,7 +1398,10 @@ pub fn literal_typed_struct(item: TokenStream) -> TokenStream {
         impl ::napi::bindgen_prelude::ValidateNapiValue for #name {}
 
         impl ::napi::bindgen_prelude::ToNapiValue for #name {
-            unsafe fn to_napi_value(__enunion_env: ::napi::sys::napi_env, val: Self) -> ::napi::bindgen_prelude::Result<::napi::sys::napi_value> {
+            unsafe fn to_napi_value(
+                __enunion_env: ::napi::sys::napi_env,
+                val: Self
+            ) -> ::napi::bindgen_prelude::Result<::napi::sys::napi_value> {
                 let env = unsafe { ::napi::Env::from_raw(__enunion_env) };
                 let mut new_object = env.create_object()?;
                 #(
