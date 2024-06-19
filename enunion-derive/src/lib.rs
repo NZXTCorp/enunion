@@ -802,21 +802,21 @@ fn write_docs(attrs: &[Attribute], prefix: &str, ts: &mut String) {
     if docs.is_empty() {
         return;
     }
-    writeln!(ts, "{}/**", prefix).expect("Failed to write to TS output file");
+    writeln!(ts, "{}/**", prefix).unwrap();
     for doc in docs {
         if let Expr::Lit(ExprLit {
             lit: Lit::Str(s), ..
         }) = &doc.value
         {
             if s.value().is_empty() {
-                writeln!(ts, "{} *", prefix).expect("Failed to write to TS output file");
+                writeln!(ts, "{} *", prefix).unwrap();
             }
             for line in s.value().lines() {
-                writeln!(ts, "{} * {}", prefix, line).expect("Failed to write to TS output file");
+                writeln!(ts, "{} * {}", prefix, line).unwrap();
             }
         }
     }
-    writeln!(ts, "{} */", prefix).expect("Failed to write to TS output file");
+    writeln!(ts, "{} */", prefix).unwrap();
 }
 
 #[allow(clippy::large_enum_variant)] // Large variant is most common
@@ -1161,20 +1161,19 @@ pub fn string_enum(_attr_input: TokenStream, item: TokenStream) -> TokenStream {
         let mut ts = String::new();
         let mut js = String::new();
         write_docs(&e.attrs, "", &mut ts);
-        writeln!(ts, "export enum {} {{", enum_ident).expect("Failed to write to TS output file");
+        writeln!(ts, "export enum {} {{", enum_ident).unwrap();
         writeln!(
             js,
             "module.exports.{ident} = nativeBinding.{ident}",
             ident = enum_ident
         )
-        .expect("Failed to write to TS output file");
+        .unwrap();
         for (i, v) in e.variants.iter().enumerate() {
             write_docs(&v.attrs, "  ", &mut ts);
             let (key, value) = &str_literals[i];
-            writeln!(ts, "  {ident} = \"{value}\",", ident = key, value = value)
-                .expect("Failed to write to TS output file");
+            writeln!(ts, "  {ident} = \"{value}\",", ident = key, value = value).unwrap();
         }
-        writeln!(ts, "}}").expect("Failed to write to TS output file");
+        writeln!(ts, "}}").unwrap();
         let mut ts_f = File::create(&ts_path).expect("Failed to open TS output file");
         ts_f.write_all(ts.as_bytes()).unwrap();
         let mut js_f = File::create(js_path).expect("Failed to open JS output file");
