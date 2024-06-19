@@ -226,18 +226,6 @@ pub fn enunion(attr_input: TokenStream, item: TokenStream) -> TokenStream {
     }
 
     let mod_ident = format_ident!("__enunion_{}", e.ident.to_string().to_case(Case::Snake));
-    let init_fn_idents = variants.iter().map(|v| {
-        format_ident!(
-            "____napi_register__enunion_{}",
-            v.variant.ident.to_string().to_case(Case::Snake)
-        )
-    });
-    let cb_names = variants.iter().map(|v| {
-        format_ident!(
-            "__enunion_callback_{}",
-            v.variant.ident.to_string().to_case(Case::Snake)
-        )
-    });
     let enum_ident = &e.ident;
     let struct_idents = || struct_variants_iter().map(|(_v, v_data)| &v_data.struct_ident);
 
@@ -250,56 +238,48 @@ pub fn enunion(attr_input: TokenStream, item: TokenStream) -> TokenStream {
             var("CARGO_PKG_VERSION").unwrap(),
             enum_ident
         ));
-        let js_path = gen_ts_folder().join(format!(
-            "{}ー{}ー{}.js",
-            var("CARGO_PKG_NAME").unwrap(),
-            var("CARGO_PKG_VERSION").unwrap(),
-            enum_ident
-        ));
         create_dir_all(ts_path.parent().unwrap()).unwrap();
         let mut ts = String::new();
-        let mut js = String::new();
         let flat_variants = variants
             .iter()
-            .filter_map(|v| match &v.data {
-                VariantData::Transparent { types } => Some((
-                    types,
-                    v.const_ident.to_string(),
-                    &v.variant.ident,
-                    &v.variant.attrs,
-                )),
-                _ => None,
-            })
-            .map(|(types, const_ident, v_ident, attrs)| {
-                (
-                    types
-                        .iter()
-                        .map(|ty| napi_derive_backend::ty_to_ts_type(ty, false, false, false).0)
-                        .chain((repr != DiscriminantRepr::None).then(|| {
+            .filter_map(|v| {
+                let VariantData::Transparent { types } = &v.data else {
+                    return None;
+                };
+
+                let variant_type =
+                    (repr != DiscriminantRepr::None)
+                        .then(|| {
                             format!(
-                                "{{ {}: typeof {} }}",
+                                "{{ {}: {} }}",
                                 discriminant_field_name_js_case.value(),
-                                const_ident
+                                v.const_value_ts.clone()
                             )
+                        })
+                        .into_iter()
+                        .chain(types.iter().map(|ty| {
+                            napi_derive_backend::ty_to_ts_type(ty, false, false, false).0
                         }))
-                        .join(" & "),
-                    format_ident!("{}{}", enum_ident, v_ident),
-                    attrs,
-                )
+                        .join(" & ");
+                Some((
+                    variant_type,
+                    format_ident!("{}{}", enum_ident, v.variant.ident),
+                    &v.variant.attrs,
+                ))
             })
             .collect::<Vec<_>>();
+
         if export_variant_types {
             for (ty, ident, attrs) in flat_variants.iter() {
                 write_docs(attrs, "", &mut ts);
-                writeln!(ts, "export type {ident} = {ty}")
-                    .expect("Failed to write to TS output file");
+                writeln!(ts, "export type {ident} = {ty}").unwrap();
             }
         }
+
         write_docs(&e.attrs, "", &mut ts);
         writeln!(
             ts,
-            "export type {} = {};",
-            enum_ident,
+            "export type {enum_ident} = {};",
             (struct_idents)()
                 .map(|s| s.to_string().to_case(Case::Pascal))
                 .chain(flat_variants.iter().map(|(ty, i, _)| {
@@ -311,34 +291,16 @@ pub fn enunion(attr_input: TokenStream, item: TokenStream) -> TokenStream {
                 }))
                 .join(" | ")
         )
-        .expect("Failed to write to TS output file");
-        if repr != DiscriminantRepr::None {
-            for v in variants.iter() {
-                writeln!(
-                    ts,
-                    "export const {ident}: {value};",
-                    ident = v.const_ident,
-                    value = v.const_value_ts
-                )
-                .expect("Failed to write to TS output file");
-                writeln!(
-                    js,
-                    "module.exports.{ident} = nativeBinding.{ident};",
-                    ident = v.const_ident,
-                )
-                .expect("Failed to write to JS output file");
-            }
-        }
+        .unwrap();
+
         let mut ts_f = File::create(&ts_path).expect("Failed to open TS output file");
         ts_f.write_all(ts.as_bytes()).unwrap();
-        let mut js_f = File::create(js_path).expect("Failed to open JS output file");
-        js_f.write_all(js.as_bytes()).unwrap();
     }
     let const_idents = variants.iter().map(|v| &v.const_ident);
     let struct_const_idents = struct_variants_iter().map(|(v, _v_data)| &v.const_ident);
     let const_values = variants.iter().map(|v| &v.const_value);
     let ts_type_attrs = struct_variants_iter().map(|(v, _v_data)| {
-        let const_ident = syn::LitStr::new(&format!("typeof {}", v.const_ident), Span::call_site());
+        let const_ident = syn::LitStr::new(&v.const_value_ts, Span::call_site());
         quote! {
             #[napi(ts_type = #const_ident)]
         }
@@ -583,19 +545,6 @@ pub fn enunion(attr_input: TokenStream, item: TokenStream) -> TokenStream {
 
                 #(
                     const #const_idents: #discriminant_type = #const_values;
-
-                    #[allow(non_snake_case)]
-                    #[allow(clippy::all)]
-                    unsafe fn #cb_names(env: napi::sys::napi_env) -> napi::Result<napi::sys::napi_value> {
-                        <#discriminant_type as napi::bindgen_prelude::ToNapiValue>::to_napi_value(env, #const_idents)
-                    }
-                    #[allow(non_snake_case)]
-                    #[allow(clippy::all)]
-                    #[cfg(not(test))]
-                    #[::napi::bindgen_prelude::ctor]
-                    fn #init_fn_idents() {
-                        ::napi::bindgen_prelude::register_module_export(None, concat!(stringify!(#const_idents), "\0"), #cb_names);
-                    }
                 )*
 
                 #(
