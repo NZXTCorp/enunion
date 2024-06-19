@@ -22,12 +22,10 @@ use syn::{
 
 use convert_case::{Case, Casing};
 use sha2::Digest;
-use syn::Visibility;
+use std::str::FromStr;
+use syn::{parse_macro_input, Visibility};
 
 type ProcMacroErrors = Vec<(Span, String)>;
-
-const SUPPORTED_REPR_TYPES: &str =
-    "\"i64\", \"enum\", \"enum_str\", \"none\", \"str\", or \"bool\"";
 
 /// This macro is applied to Rust enums. It generates code that will expose the enum to TypeScript as a discriminated union. It uses `napi` to accomplish this.
 /// Enunion also handles automatically converting between the two representations, in Rust you can define `#[napi]` methods that accept the enum as an argument, or return an instance of that enum.
@@ -108,55 +106,35 @@ const SUPPORTED_REPR_TYPES: &str =
 #[proc_macro_error::proc_macro_error]
 #[proc_macro_attribute]
 pub fn enunion(attr_input: TokenStream, item: TokenStream) -> TokenStream {
-    let attr: Args = syn::parse(attr_input).unwrap_or_else(|e| abort_call_site!("Failed to parse enunion input, please use field = \"value\" in a comma separated list. Check the documentation for examples. Error: {:?}", e));
-    let mut repr = None;
+    let attr: Args = parse_macro_input!(attr_input as Args);
+    let mut repr = DiscriminantRepr::I64;
     let mut discriminant_field_name = None;
-    let mut export_variant_types = None;
+    let mut export_variant_types = true;
     for MetaNameValue { path, value, .. } in attr.items.iter() {
         match path.get_ident().map(|i| i.to_string()).as_deref() {
-            Some("discriminant_repr") => match value {
-                Expr::Lit(ExprLit { lit: Lit::Str(s), .. }) => {
-                    match s.value().as_str() {
-                        "i64" => {
-                            repr = Some(DiscriminantRepr::I64);
-                        }
-                        "bool" => {
-                            repr = Some(DiscriminantRepr::Bool);
-                        }
-                        "str" => {
-                            repr = Some(DiscriminantRepr::String);
-                        }
-                        "enum" => {
-                            repr = Some(DiscriminantRepr::Enum);
-                        }
-                        "enum_str" => {
-                            repr = Some(DiscriminantRepr::EnumStr);
-                        }
-                        "none" => {
-                            repr = Some(DiscriminantRepr::None);
-                        }
-                        other => {
-                            abort_call_site!("{} is not a recognized representation, please use {}", other, SUPPORTED_REPR_TYPES)
-                        }
-                    }
-                }
-                _ => abort_call_site!("only string literals are supported for the discriminant_repr, please provide {}", SUPPORTED_REPR_TYPES)
-            },
-            Some("discriminant_field_name") =>
-                match value {
-                    Expr::Lit(ExprLit { lit: Lit::Str(s), .. })=> {
-                        discriminant_field_name = Some(s.value());
-                    }
-                    _ => abort_call_site!("only string literals are supported for the discriminant_field_name, please provide a string")
-                },
-            Some("export_variant_types") => match value {
-                Expr::Lit(ExprLit { lit: Lit::Bool(b), .. }) => {
-                    export_variant_types = Some(b.value());
-                },
-                _ => abort_call_site!("only bool literals are supported for export_variant_types, please provide a bool")
-            },
+            Some("discriminant_repr") => {
+                repr = DiscriminantRepr::from(value);
+            }
+            Some("discriminant_field_name") => {
+                let Expr::Lit(ExprLit {
+                    lit: Lit::Str(s), ..
+                }) = value
+                else {
+                    abort!(value.span(), "only string literals are supported for the discriminant_field_name, please provide a string")
+                };
+                discriminant_field_name = Some(s.value());
+            }
+            Some("export_variant_types") => {
+                let Expr::Lit(ExprLit {
+                    lit: Lit::Bool(b), ..
+                }) = value
+                else {
+                    abort!(value.span(), "only bool literals are supported for export_variant_types, please provide a bool")
+                };
+                export_variant_types = b.value();
+            }
             _ => {
-                abort_call_site!("{} is not a recognized argument, only discriminant_repr, and discriminant_field_name are recognized.", path.to_token_stream());
+                abort!(path.span(), "{} is not a recognized argument, only discriminant_repr, discriminant_field_name and export_variant_types are recognized.", path.to_token_stream());
             }
         }
     }
@@ -167,13 +145,10 @@ pub fn enunion(attr_input: TokenStream, item: TokenStream) -> TokenStream {
             e
         )
     });
-    if let Some(lt) = &e.generics.lt_token {
-        abort!(
-            lt.spans[0],
-            "enunion does not support generics. Please remove the {} in this declaration.",
-            e.generics.into_token_stream()
-        );
+    if e.generics.lt_token.is_some() {
+        abort!(e.generics.span(), "enunion does not support generics.");
     }
+
     let discriminant_field_name = discriminant_field_name
         .unwrap_or_else(|| format!("{}_type", e.ident.to_string().to_case(Case::Snake)));
     let discriminant_field_name_js_case = LitStr::new(
@@ -181,7 +156,6 @@ pub fn enunion(attr_input: TokenStream, item: TokenStream) -> TokenStream {
         Span::call_site(),
     );
     let discriminant_field_name = format_ident!("r#{}", discriminant_field_name);
-    let repr = repr.unwrap_or(DiscriminantRepr::I64);
     let mut discriminant_enum_ident = None;
     let (discriminant_type, discriminant_type_dynamic) = match repr {
         DiscriminantRepr::I64 => (quote!(i64), quote!(i64)),
@@ -199,48 +173,44 @@ pub fn enunion(attr_input: TokenStream, item: TokenStream) -> TokenStream {
             (i.clone(), i)
         }
     };
+
     let variants = {
         let mut errs = Vec::new();
         let mut variants = Vec::new();
-        let iter = e
-            .variants
-            .iter()
-            .enumerate()
-            .map(|(i, v)| {
-                VariantComputedData::new(
-                    &e.ident,
-                    &discriminant_enum_ident,
-                    v,
-                    repr,
-                    &discriminant_field_name,
-                    i,
-                )
-            })
-            .map(|r| match r {
+
+        for res in e.variants.iter().enumerate().map(|(i, v)| {
+            VariantComputedData::new(
+                &e.ident,
+                &discriminant_enum_ident,
+                v,
+                repr,
+                &discriminant_field_name,
+                i,
+            )
+        }) {
+            match res {
                 Ok(v) => variants.push(v),
                 Err(e) => errs.push(e),
-            });
-        for _ in iter {}
-        if !errs.is_empty() {
-            let mut errs = errs.into_iter().peekable();
-            while let Some(err) = errs.next() {
-                if errs.peek().is_some() {
-                    emit_error!(err.0, "{}", err.1);
-                } else {
-                    abort!(err.0, "{}", err.1);
-                }
             }
-            unreachable!()
-        } else {
-            variants
         }
+
+        if let [first_errs @ .., last_err] = &errs[..] {
+            for (span, s) in first_errs {
+                emit_error!(span, "{}", s);
+            }
+            abort!(last_err.0, "{}", last_err.1);
+        }
+
+        variants
     };
+
     let struct_variants_iter = || {
         variants.iter().filter_map(|v| match &v.data {
             VariantData::Struct(data) => Some((v, data)),
             _ => None,
         })
     };
+
     if repr != DiscriminantRepr::None {
         // Check for duplicate discriminant values
         let mut sorted_idents = variants
@@ -254,6 +224,7 @@ pub fn enunion(attr_input: TokenStream, item: TokenStream) -> TokenStream {
             }
         }
     }
+
     let mod_ident = format_ident!("__enunion_{}", e.ident.to_string().to_case(Case::Snake));
     let init_fn_idents = variants.iter().map(|v| {
         format_ident!(
@@ -269,6 +240,7 @@ pub fn enunion(attr_input: TokenStream, item: TokenStream) -> TokenStream {
     });
     let enum_ident = &e.ident;
     let struct_idents = || struct_variants_iter().map(|(_v, v_data)| &v_data.struct_ident);
+
     // This is the NAPI internal environment variable used to find the path to write TS definitions to. If it's set, then a new file is being generated.
     if var("TYPE_DEF_TMP_PATH").is_ok() {
         // Use of a CJK dash here is intentional, since it's not a character that can be used in a cargo package name.
@@ -316,7 +288,7 @@ pub fn enunion(attr_input: TokenStream, item: TokenStream) -> TokenStream {
                 )
             })
             .collect::<Vec<_>>();
-        if export_variant_types.unwrap_or(true) {
+        if export_variant_types {
             for (ty, ident, attrs) in flat_variants.iter() {
                 write_docs(attrs, "", &mut ts);
                 writeln!(ts, "export type {ident} = {ty}")
@@ -331,7 +303,7 @@ pub fn enunion(attr_input: TokenStream, item: TokenStream) -> TokenStream {
             (struct_idents)()
                 .map(|s| s.to_string().to_case(Case::Pascal))
                 .chain(flat_variants.iter().map(|(ty, i, _)| {
-                    if export_variant_types.unwrap_or(true) {
+                    if export_variant_types {
                         i.to_string()
                     } else {
                         ty.clone()
@@ -1101,6 +1073,46 @@ enum DiscriminantRepr {
     Enum,
     EnumStr,
     None,
+}
+
+impl From<&Expr> for DiscriminantRepr {
+    fn from(expr: &Expr) -> Self {
+        let Expr::Lit(ExprLit {
+            lit: Lit::Str(s), ..
+        }) = expr
+        else {
+            abort!(expr.span(), "`discriminant_repr` must be a string literal.");
+        };
+
+        let s = s.value();
+        let s = s.as_str();
+
+        let Ok(repr) = DiscriminantRepr::from_str(s) else {
+            abort!(
+                expr.span(),
+                r#"`{}` is not a recognized representation, please use "i64", "enum", "enum_str", "none", "str", or "bool""#,
+                s
+            )
+        };
+
+        repr
+    }
+}
+
+impl FromStr for DiscriminantRepr {
+    type Err = ();
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "i64" => Ok(DiscriminantRepr::I64),
+            "bool" => Ok(DiscriminantRepr::Bool),
+            "str" => Ok(DiscriminantRepr::String),
+            "enum" => Ok(DiscriminantRepr::Enum),
+            "enum_str" => Ok(DiscriminantRepr::EnumStr),
+            "none" => Ok(DiscriminantRepr::None),
+            _ => Err(()),
+        }
+    }
 }
 
 struct Args {

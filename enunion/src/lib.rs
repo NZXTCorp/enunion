@@ -17,17 +17,17 @@ fn stringify_json_value_inner<V>(e: &napi::Env, json_value: V) -> Option<JsStrin
 where
     V: NapiRaw,
 {
-    e.get_global()
-        .ok()?
-        .get_named_property::<JsObject>("JSON")
-        .ok()?
-        .get::<_, JsFunction>("stringify")
-        .ok()??
+    let stringify = e
+        .get_global()
+        .and_then(|g| {
+            g.get_named_property::<JsObject>("JSON")?
+                .get::<_, JsFunction>("stringify")
+        })
+        .ok()??;
+
+    stringify
         .call(None, &[json_value])
-        .ok()?
-        .coerce_to_string()
-        .ok()?
-        .into_utf8()
+        .and_then(|s| s.coerce_to_string()?.into_utf8())
         .ok()
 }
 
