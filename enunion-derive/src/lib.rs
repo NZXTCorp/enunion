@@ -22,12 +22,10 @@ use syn::{
 
 use convert_case::{Case, Casing};
 use sha2::Digest;
-use syn::Visibility;
+use std::str::FromStr;
+use syn::{parse_macro_input, Visibility};
 
 type ProcMacroErrors = Vec<(Span, String)>;
-
-const SUPPORTED_REPR_TYPES: &str =
-    "\"i64\", \"enum\", \"enum_str\", \"none\", \"str\", or \"bool\"";
 
 /// This macro is applied to Rust enums. It generates code that will expose the enum to TypeScript as a discriminated union. It uses `napi` to accomplish this.
 /// Enunion also handles automatically converting between the two representations, in Rust you can define `#[napi]` methods that accept the enum as an argument, or return an instance of that enum.
@@ -108,55 +106,35 @@ const SUPPORTED_REPR_TYPES: &str =
 #[proc_macro_error::proc_macro_error]
 #[proc_macro_attribute]
 pub fn enunion(attr_input: TokenStream, item: TokenStream) -> TokenStream {
-    let attr: Args = syn::parse(attr_input).unwrap_or_else(|e| abort_call_site!("Failed to parse enunion input, please use field = \"value\" in a comma separated list. Check the documentation for examples. Error: {:?}", e));
-    let mut repr = None;
+    let attr: Args = parse_macro_input!(attr_input as Args);
+    let mut repr = DiscriminantRepr::I64;
     let mut discriminant_field_name = None;
-    let mut export_variant_types = None;
+    let mut export_variant_types = true;
     for MetaNameValue { path, value, .. } in attr.items.iter() {
         match path.get_ident().map(|i| i.to_string()).as_deref() {
-            Some("discriminant_repr") => match value {
-                Expr::Lit(ExprLit { lit: Lit::Str(s), .. }) => {
-                    match s.value().as_str() {
-                        "i64" => {
-                            repr = Some(DiscriminantRepr::I64);
-                        }
-                        "bool" => {
-                            repr = Some(DiscriminantRepr::Bool);
-                        }
-                        "str" => {
-                            repr = Some(DiscriminantRepr::String);
-                        }
-                        "enum" => {
-                            repr = Some(DiscriminantRepr::Enum);
-                        }
-                        "enum_str" => {
-                            repr = Some(DiscriminantRepr::EnumStr);
-                        }
-                        "none" => {
-                            repr = Some(DiscriminantRepr::None);
-                        }
-                        other => {
-                            abort_call_site!("{} is not a recognized representation, please use {}", other, SUPPORTED_REPR_TYPES)
-                        }
-                    }
-                }
-                _ => abort_call_site!("only string literals are supported for the discriminant_repr, please provide {}", SUPPORTED_REPR_TYPES)
-            },
-            Some("discriminant_field_name") =>
-                match value {
-                    Expr::Lit(ExprLit { lit: Lit::Str(s), .. })=> {
-                        discriminant_field_name = Some(s.value());
-                    }
-                    _ => abort_call_site!("only string literals are supported for the discriminant_field_name, please provide a string")
-                },
-            Some("export_variant_types") => match value {
-                Expr::Lit(ExprLit { lit: Lit::Bool(b), .. }) => {
-                    export_variant_types = Some(b.value());
-                },
-                _ => abort_call_site!("only bool literals are supported for export_variant_types, please provide a bool")
-            },
+            Some("discriminant_repr") => {
+                repr = DiscriminantRepr::from(value);
+            }
+            Some("discriminant_field_name") => {
+                let Expr::Lit(ExprLit {
+                    lit: Lit::Str(s), ..
+                }) = value
+                else {
+                    abort!(value.span(), "only string literals are supported for the discriminant_field_name, please provide a string")
+                };
+                discriminant_field_name = Some(s.value());
+            }
+            Some("export_variant_types") => {
+                let Expr::Lit(ExprLit {
+                    lit: Lit::Bool(b), ..
+                }) = value
+                else {
+                    abort!(value.span(), "only bool literals are supported for export_variant_types, please provide a bool")
+                };
+                export_variant_types = b.value();
+            }
             _ => {
-                abort_call_site!("{} is not a recognized argument, only discriminant_repr, and discriminant_field_name are recognized.", path.to_token_stream());
+                abort!(path.span(), "{} is not a recognized argument, only discriminant_repr, discriminant_field_name and export_variant_types are recognized.", path.to_token_stream());
             }
         }
     }
@@ -167,13 +145,10 @@ pub fn enunion(attr_input: TokenStream, item: TokenStream) -> TokenStream {
             e
         )
     });
-    if let Some(lt) = &e.generics.lt_token {
-        abort!(
-            lt.spans[0],
-            "enunion does not support generics. Please remove the {} in this declaration.",
-            e.generics.into_token_stream()
-        );
+    if e.generics.lt_token.is_some() {
+        abort!(e.generics.span(), "enunion does not support generics.");
     }
+
     let discriminant_field_name = discriminant_field_name
         .unwrap_or_else(|| format!("{}_type", e.ident.to_string().to_case(Case::Snake)));
     let discriminant_field_name_js_case = LitStr::new(
@@ -181,7 +156,6 @@ pub fn enunion(attr_input: TokenStream, item: TokenStream) -> TokenStream {
         Span::call_site(),
     );
     let discriminant_field_name = format_ident!("r#{}", discriminant_field_name);
-    let repr = repr.unwrap_or(DiscriminantRepr::I64);
     let mut discriminant_enum_ident = None;
     let (discriminant_type, discriminant_type_dynamic) = match repr {
         DiscriminantRepr::I64 => (quote!(i64), quote!(i64)),
@@ -199,48 +173,44 @@ pub fn enunion(attr_input: TokenStream, item: TokenStream) -> TokenStream {
             (i.clone(), i)
         }
     };
+
     let variants = {
         let mut errs = Vec::new();
         let mut variants = Vec::new();
-        let iter = e
-            .variants
-            .iter()
-            .enumerate()
-            .map(|(i, v)| {
-                VariantComputedData::new(
-                    &e.ident,
-                    &discriminant_enum_ident,
-                    v,
-                    repr,
-                    &discriminant_field_name,
-                    i,
-                )
-            })
-            .map(|r| match r {
+
+        for res in e.variants.iter().enumerate().map(|(i, v)| {
+            VariantComputedData::new(
+                &e.ident,
+                &discriminant_enum_ident,
+                v,
+                repr,
+                &discriminant_field_name,
+                i,
+            )
+        }) {
+            match res {
                 Ok(v) => variants.push(v),
                 Err(e) => errs.push(e),
-            });
-        for _ in iter {}
-        if !errs.is_empty() {
-            let mut errs = errs.into_iter().peekable();
-            while let Some(err) = errs.next() {
-                if errs.peek().is_some() {
-                    emit_error!(err.0, "{}", err.1);
-                } else {
-                    abort!(err.0, "{}", err.1);
-                }
             }
-            unreachable!()
-        } else {
-            variants
         }
+
+        if let [first_errs @ .., last_err] = &errs[..] {
+            for (span, s) in first_errs {
+                emit_error!(span, "{}", s);
+            }
+            abort!(last_err.0, "{}", last_err.1);
+        }
+
+        variants
     };
+
     let struct_variants_iter = || {
         variants.iter().filter_map(|v| match &v.data {
             VariantData::Struct(data) => Some((v, data)),
             _ => None,
         })
     };
+
     if repr != DiscriminantRepr::None {
         // Check for duplicate discriminant values
         let mut sorted_idents = variants
@@ -254,21 +224,11 @@ pub fn enunion(attr_input: TokenStream, item: TokenStream) -> TokenStream {
             }
         }
     }
+
     let mod_ident = format_ident!("__enunion_{}", e.ident.to_string().to_case(Case::Snake));
-    let init_fn_idents = variants.iter().map(|v| {
-        format_ident!(
-            "____napi_register__enunion_{}",
-            v.variant.ident.to_string().to_case(Case::Snake)
-        )
-    });
-    let cb_names = variants.iter().map(|v| {
-        format_ident!(
-            "__enunion_callback_{}",
-            v.variant.ident.to_string().to_case(Case::Snake)
-        )
-    });
     let enum_ident = &e.ident;
     let struct_idents = || struct_variants_iter().map(|(_v, v_data)| &v_data.struct_ident);
+
     // This is the NAPI internal environment variable used to find the path to write TS definitions to. If it's set, then a new file is being generated.
     if var("TYPE_DEF_TMP_PATH").is_ok() {
         // Use of a CJK dash here is intentional, since it's not a character that can be used in a cargo package name.
@@ -278,60 +238,52 @@ pub fn enunion(attr_input: TokenStream, item: TokenStream) -> TokenStream {
             var("CARGO_PKG_VERSION").unwrap(),
             enum_ident
         ));
-        let js_path = gen_ts_folder().join(format!(
-            "{}ー{}ー{}.js",
-            var("CARGO_PKG_NAME").unwrap(),
-            var("CARGO_PKG_VERSION").unwrap(),
-            enum_ident
-        ));
         create_dir_all(ts_path.parent().unwrap()).unwrap();
         let mut ts = String::new();
-        let mut js = String::new();
         let flat_variants = variants
             .iter()
-            .filter_map(|v| match &v.data {
-                VariantData::Transparent { types } => Some((
-                    types,
-                    v.const_ident.to_string(),
-                    &v.variant.ident,
-                    &v.variant.attrs,
-                )),
-                _ => None,
-            })
-            .map(|(types, const_ident, v_ident, attrs)| {
-                (
-                    types
-                        .iter()
-                        .map(|ty| napi_derive_backend::ty_to_ts_type(ty, false, false, false).0)
-                        .chain((repr != DiscriminantRepr::None).then(|| {
+            .filter_map(|v| {
+                let VariantData::Transparent { types } = &v.data else {
+                    return None;
+                };
+
+                let variant_type =
+                    (repr != DiscriminantRepr::None)
+                        .then(|| {
                             format!(
-                                "{{ {}: typeof {} }}",
+                                "{{ {}: {} }}",
                                 discriminant_field_name_js_case.value(),
-                                const_ident
+                                v.const_value_ts.clone()
                             )
+                        })
+                        .into_iter()
+                        .chain(types.iter().map(|ty| {
+                            napi_derive_backend::ty_to_ts_type(ty, false, false, false).0
                         }))
-                        .join(" & "),
-                    format_ident!("{}{}", enum_ident, v_ident),
-                    attrs,
-                )
+                        .join(" & ");
+                Some((
+                    variant_type,
+                    format_ident!("{}{}", enum_ident, v.variant.ident),
+                    &v.variant.attrs,
+                ))
             })
             .collect::<Vec<_>>();
-        if export_variant_types.unwrap_or(true) {
+
+        if export_variant_types {
             for (ty, ident, attrs) in flat_variants.iter() {
                 write_docs(attrs, "", &mut ts);
-                writeln!(ts, "export type {ident} = {ty}")
-                    .expect("Failed to write to TS output file");
+                writeln!(ts, "export type {ident} = {ty}").unwrap();
             }
         }
+
         write_docs(&e.attrs, "", &mut ts);
         writeln!(
             ts,
-            "export type {} = {};",
-            enum_ident,
+            "export type {enum_ident} = {};",
             (struct_idents)()
                 .map(|s| s.to_string().to_case(Case::Pascal))
                 .chain(flat_variants.iter().map(|(ty, i, _)| {
-                    if export_variant_types.unwrap_or(true) {
+                    if export_variant_types {
                         i.to_string()
                     } else {
                         ty.clone()
@@ -339,34 +291,16 @@ pub fn enunion(attr_input: TokenStream, item: TokenStream) -> TokenStream {
                 }))
                 .join(" | ")
         )
-        .expect("Failed to write to TS output file");
-        if repr != DiscriminantRepr::None {
-            for v in variants.iter() {
-                writeln!(
-                    ts,
-                    "export const {ident}: {value};",
-                    ident = v.const_ident,
-                    value = v.const_value_ts
-                )
-                .expect("Failed to write to TS output file");
-                writeln!(
-                    js,
-                    "module.exports.{ident} = nativeBinding.{ident};",
-                    ident = v.const_ident,
-                )
-                .expect("Failed to write to JS output file");
-            }
-        }
+        .unwrap();
+
         let mut ts_f = File::create(&ts_path).expect("Failed to open TS output file");
         ts_f.write_all(ts.as_bytes()).unwrap();
-        let mut js_f = File::create(js_path).expect("Failed to open JS output file");
-        js_f.write_all(js.as_bytes()).unwrap();
     }
     let const_idents = variants.iter().map(|v| &v.const_ident);
     let struct_const_idents = struct_variants_iter().map(|(v, _v_data)| &v.const_ident);
     let const_values = variants.iter().map(|v| &v.const_value);
     let ts_type_attrs = struct_variants_iter().map(|(v, _v_data)| {
-        let const_ident = syn::LitStr::new(&format!("typeof {}", v.const_ident), Span::call_site());
+        let const_ident = syn::LitStr::new(&v.const_value_ts, Span::call_site());
         quote! {
             #[napi(ts_type = #const_ident)]
         }
@@ -514,7 +448,7 @@ pub fn enunion(attr_input: TokenStream, item: TokenStream) -> TokenStream {
                                     Ok(super::#enum_ident::#v_ident ( #(#field_range),* ))
                                 };
 
-                                r.map_err(|e| ::napi::Error::from_reason(format!("JS object provided was not a valid {}, discriminant is {:?}, but encountered errors deserializing as that type: {:?}", stringify!(#enum_ident), ty, e)))
+                                r.map_err(|e| ::enunion::fail_discriminant_msg(stringify!(#enum_ident), &format_args!("{ty:?}"), &e))
                             }
                         }
                     }
@@ -541,21 +475,19 @@ pub fn enunion(attr_input: TokenStream, item: TokenStream) -> TokenStream {
                         let const_ident = &v.const_ident;
                         quote! {
                             super::#enum_ident::#variant_ident(#(#field_range),*) => {
-                                let env = unsafe { ::napi::Env::from_raw(__enunion_env) };
-                                let mut merged_object = env.create_object()?;
-                                let sources = [#(
-                                    unsafe {
-                                        <::napi::JsObject as ::napi::NapiValue>::from_raw(
+                                unsafe {
+                                    let env = ::napi::Env::from_raw(__enunion_env);
+                                    let mut merged_object = env.create_object()?;
+                                    let sources = [#(
+                                        ::enunion::intersection_type_as_js_object::<#types>(
                                             __enunion_env,
-                                            <#types as ::napi::bindgen_prelude::ToNapiValue>::to_napi_value(
-                                                __enunion_env,
-                                                #field_range
-                                            )?).expect("enunion doesn't support intersection types where the members aren't objects")
-                                    }
-                                ),*];
-                                ::enunion::merge_objects(&mut merged_object, &sources)?;
-                                merged_object.set(#discriminant_field_name_js_case, #const_ident)?;
-                                Ok(<::napi::JsObject as ::napi::NapiRaw>::raw(&merged_object))
+                                            #field_range
+                                        )?
+                                    ),*];
+                                    ::enunion::merge_objects(&mut merged_object, &sources)?;
+                                    merged_object.set(#discriminant_field_name_js_case, #const_ident)?;
+                                    Ok(<::napi::JsObject as ::napi::NapiRaw>::raw(&merged_object))
+                                }
                             },
                         }
                     }
@@ -579,9 +511,12 @@ pub fn enunion(attr_input: TokenStream, item: TokenStream) -> TokenStream {
                         match #ty_compare_expr {
                             #from_arms
                             _ => {
-                                let json_value = &o;
-                                let full_value = ::enunion::stringify_json_value(__enunion_env, json_value);
-                                Err(::napi::Error::from_reason(format!("JS object provided was not a valid {}, {} = {:?} {}", stringify!(#enum_ident), #discriminant_field_name_js_case, ty, full_value)))
+                                let full_value = ::enunion::stringify_json_value(__enunion_env, &o);
+                                Err(::enunion::fail_invalid_ty_msg(
+                                    stringify!(#enum_ident),
+                                    #discriminant_field_name_js_case,
+                                    &format_args!("{ty:?}"),
+                                    &full_value))
                             }
                         }
                     }
@@ -611,19 +546,6 @@ pub fn enunion(attr_input: TokenStream, item: TokenStream) -> TokenStream {
 
                 #(
                     const #const_idents: #discriminant_type = #const_values;
-
-                    #[allow(non_snake_case)]
-                    #[allow(clippy::all)]
-                    unsafe fn #cb_names(env: napi::sys::napi_env) -> napi::Result<napi::sys::napi_value> {
-                        <#discriminant_type as napi::bindgen_prelude::ToNapiValue>::to_napi_value(env, #const_idents)
-                    }
-                    #[allow(non_snake_case)]
-                    #[allow(clippy::all)]
-                    #[cfg(not(test))]
-                    #[::napi::bindgen_prelude::ctor]
-                    fn #init_fn_idents() {
-                        ::napi::bindgen_prelude::register_module_export(None, concat!(stringify!(#const_idents), "\0"), #cb_names);
-                    }
                 )*
 
                 #(
@@ -661,10 +583,15 @@ pub fn enunion(attr_input: TokenStream, item: TokenStream) -> TokenStream {
                         fn try_from(o: ::napi::JsObject) -> ::std::result::Result<Self, Self::Error> {
                             let ty: Option<#discriminant_type_dynamic> = o.get(#discriminant_field_name_js_case)?;
                             if #ty_compare_expr != Some(#struct_const_idents) {
-                                return Err(::napi::Error::from_reason(format!("provided object was not {}", stringify!(#struct_idents))));
+                                return Err(::enunion::fail_on_wrong_discriminant(stringify!(#struct_idents)));
                             }
                             Ok(Self {
-                                #(#enum_field_idents: o.get(stringify!(#js_object_field_tokens))?.ok_or_else(|| ::napi::Error::from_reason(format!("conversion to {} failed, field {} is missing", stringify!(#struct_idents), stringify!(#js_object_field_tokens))))?,)*
+                                #(#enum_field_idents: o.get(
+                                    stringify!(#js_object_field_tokens))?
+                                    .ok_or_else(|| ::enunion::fail_on_missing_field(
+                                        stringify!(#struct_idents),
+                                        stringify!(#js_object_field_tokens)
+                                    ))?,)*
                                 #discriminant_field_name: #struct_const_idents,
                             })
                         }
@@ -739,9 +666,11 @@ pub fn enunion(attr_input: TokenStream, item: TokenStream) -> TokenStream {
                                 let ident = format_ident!("_{}", i);
 
                                 quote! {
-                                    let #ident = match <#ty as ::napi::bindgen_prelude::FromNapiValue>::from_napi_value(__enunion_env, __enunion_napi_val) {
-                                        Ok(#ident) => #ident,
-                                        Err(_) => break 'matcher,
+                                    let Ok(#ident) = <#ty as ::napi::bindgen_prelude::FromNapiValue>::from_napi_value(
+                                        __enunion_env,
+                                        __enunion_napi_val
+                                    ) else {
+                                        break 'matcher;
                                     };
                                 }
                             })
@@ -769,7 +698,11 @@ pub fn enunion(attr_input: TokenStream, item: TokenStream) -> TokenStream {
                             quote! { { .. } }
                         };
                         quote! {
-                            super::#enum_ident::#v_ident #enum_pattern_tokens => <#s_ident as ::napi::bindgen_prelude::ToNapiValue>::to_napi_value(__enunion_env, val.try_into().unwrap()),
+                            super::#enum_ident::#v_ident #enum_pattern_tokens =>
+                                <#s_ident as ::napi::bindgen_prelude::ToNapiValue>::to_napi_value(
+                                    __enunion_env,
+                                    val.try_into().unwrap()
+                                ),
                         }
                     },
                     VariantData::Transparent {types} => {
@@ -784,18 +717,14 @@ pub fn enunion(attr_input: TokenStream, item: TokenStream) -> TokenStream {
                             // This usage only really makes sense with objects. Otherwise it's not
                             // possible to merge these.
                             quote! {
-                                {
-                                    let env = unsafe { ::napi::Env::from_raw(__enunion_env) };
+                                unsafe {
+                                    let env = ::napi::Env::from_raw(__enunion_env);
                                     let mut merged_object = env.create_object()?;
                                     let sources = [#(
-                                        unsafe {
-                                            <::napi::JsObject as ::napi::NapiValue>::from_raw(
-                                                __enunion_env,
-                                                <#types as ::napi::bindgen_prelude::ToNapiValue>::to_napi_value(
-                                                    __enunion_env,
-                                                    #field_range
-                                                )?).expect("enunion doesn't support intersection types where the members aren't objects")
-                                        }
+                                        ::enunion::intersection_type_as_js_object::<#types>(
+                                            __enunion_env,
+                                            #field_range
+                                        )?
                                     ),*];
                                     ::enunion::merge_objects(&mut merged_object, &sources)?;
                                     Ok(<::napi::JsObject as ::napi::NapiRaw>::raw(&merged_object))
@@ -820,10 +749,16 @@ pub fn enunion(attr_input: TokenStream, item: TokenStream) -> TokenStream {
                 use super::*;
 
                 impl ::napi::bindgen_prelude::FromNapiValue for super::#enum_ident {
-                    unsafe fn from_napi_value(__enunion_env: ::napi::sys::napi_env, __enunion_napi_val: ::napi::sys::napi_value) -> ::napi::bindgen_prelude::Result<Self> {
+                    unsafe fn from_napi_value(
+                        __enunion_env: ::napi::sys::napi_env,
+                        __enunion_napi_val: ::napi::sys::napi_value
+                    ) -> ::napi::bindgen_prelude::Result<Self> {
                         #from_impl;
 
-                        let json_value = <::napi::JsUnknown as ::napi::NapiValue>::from_raw(__enunion_env, __enunion_napi_val).unwrap();
+                        let json_value = <::napi::JsUnknown as ::napi::NapiValue>::from_raw(
+                            __enunion_env,
+                            __enunion_napi_val
+                        ).unwrap();
                         let full_value = ::enunion::stringify_json_value(__enunion_env, json_value);
                         Err(
                             ::napi::Error::from_reason(
@@ -840,7 +775,10 @@ pub fn enunion(attr_input: TokenStream, item: TokenStream) -> TokenStream {
                 impl ::napi::bindgen_prelude::ValidateNapiValue for super::#enum_ident {}
 
                 impl ::napi::bindgen_prelude::ToNapiValue for super::#enum_ident {
-                    unsafe fn to_napi_value(__enunion_env: ::napi::sys::napi_env, val: Self) -> ::napi::bindgen_prelude::Result<::napi::sys::napi_value> {
+                    unsafe fn to_napi_value(
+                        __enunion_env: ::napi::sys::napi_env,
+                        val: Self
+                    ) -> ::napi::bindgen_prelude::Result<::napi::sys::napi_value> {
                         match val {
                             #into_arms
                         }
@@ -882,21 +820,21 @@ fn write_docs(attrs: &[Attribute], prefix: &str, ts: &mut String) {
     if docs.is_empty() {
         return;
     }
-    writeln!(ts, "{}/**", prefix).expect("Failed to write to TS output file");
+    writeln!(ts, "{}/**", prefix).unwrap();
     for doc in docs {
         if let Expr::Lit(ExprLit {
             lit: Lit::Str(s), ..
         }) = &doc.value
         {
             if s.value().is_empty() {
-                writeln!(ts, "{} *", prefix).expect("Failed to write to TS output file");
+                writeln!(ts, "{} *", prefix).unwrap();
             }
             for line in s.value().lines() {
-                writeln!(ts, "{} * {}", prefix, line).expect("Failed to write to TS output file");
+                writeln!(ts, "{} * {}", prefix, line).unwrap();
             }
         }
     }
-    writeln!(ts, "{} */", prefix).expect("Failed to write to TS output file");
+    writeln!(ts, "{} */", prefix).unwrap();
 }
 
 #[allow(clippy::large_enum_variant)] // Large variant is most common
@@ -1103,6 +1041,46 @@ enum DiscriminantRepr {
     None,
 }
 
+impl From<&Expr> for DiscriminantRepr {
+    fn from(expr: &Expr) -> Self {
+        let Expr::Lit(ExprLit {
+            lit: Lit::Str(s), ..
+        }) = expr
+        else {
+            abort!(expr.span(), "`discriminant_repr` must be a string literal.");
+        };
+
+        let s = s.value();
+        let s = s.as_str();
+
+        let Ok(repr) = DiscriminantRepr::from_str(s) else {
+            abort!(
+                expr.span(),
+                r#"`{}` is not a recognized representation, please use "i64", "enum", "enum_str", "none", "str", or "bool""#,
+                s
+            )
+        };
+
+        repr
+    }
+}
+
+impl FromStr for DiscriminantRepr {
+    type Err = ();
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "i64" => Ok(DiscriminantRepr::I64),
+            "bool" => Ok(DiscriminantRepr::Bool),
+            "str" => Ok(DiscriminantRepr::String),
+            "enum" => Ok(DiscriminantRepr::Enum),
+            "enum_str" => Ok(DiscriminantRepr::EnumStr),
+            "none" => Ok(DiscriminantRepr::None),
+            _ => Err(()),
+        }
+    }
+}
+
 struct Args {
     items: Punctuated<MetaNameValue, Token!(,)>,
 }
@@ -1201,20 +1179,19 @@ pub fn string_enum(_attr_input: TokenStream, item: TokenStream) -> TokenStream {
         let mut ts = String::new();
         let mut js = String::new();
         write_docs(&e.attrs, "", &mut ts);
-        writeln!(ts, "export enum {} {{", enum_ident).expect("Failed to write to TS output file");
+        writeln!(ts, "export enum {} {{", enum_ident).unwrap();
         writeln!(
             js,
             "module.exports.{ident} = nativeBinding.{ident}",
             ident = enum_ident
         )
-        .expect("Failed to write to TS output file");
+        .unwrap();
         for (i, v) in e.variants.iter().enumerate() {
             write_docs(&v.attrs, "  ", &mut ts);
             let (key, value) = &str_literals[i];
-            writeln!(ts, "  {ident} = \"{value}\",", ident = key, value = value)
-                .expect("Failed to write to TS output file");
+            writeln!(ts, "  {ident} = \"{value}\",", ident = key, value = value).unwrap();
         }
-        writeln!(ts, "}}").expect("Failed to write to TS output file");
+        writeln!(ts, "}}").unwrap();
         let mut ts_f = File::create(&ts_path).expect("Failed to open TS output file");
         ts_f.write_all(ts.as_bytes()).unwrap();
         let mut js_f = File::create(js_path).expect("Failed to open JS output file");
@@ -1249,7 +1226,7 @@ pub fn string_enum(_attr_input: TokenStream, item: TokenStream) -> TokenStream {
                 let v = <String as ::napi::bindgen_prelude::FromNapiValue>::from_napi_value(__enunion_env, __enunion_napi_val)?;
                 match v.as_str() {
                     #(#values => Ok(#enum_ident::#variant_idents),)*
-                    _ => Err(::napi::Error::from_reason(format!("JS string provided was not a valid {}, string is {:?}", stringify!(#enum_ident), v)))
+                    _ => Err(::enunion::fail_string_enum_discriminant(stringify!(#enum_ident), &v))
                 }
             }
         }
@@ -1300,39 +1277,31 @@ pub fn string_enum(_attr_input: TokenStream, item: TokenStream) -> TokenStream {
 #[proc_macro]
 #[proc_macro_error::proc_macro_error]
 pub fn literal_typed_struct(item: TokenStream) -> TokenStream {
-    let input_data = syn::parse::<FieldDescriptors>(item)
-        .unwrap_or_else(|e| abort_call_site!("Failed to parse literal_typed_struct input {:?}", e));
+    let input_data = parse_macro_input!(item as FieldDescriptors);
     let name = input_data.struct_ident;
     let mod_name = format_ident!(
         "__enunion_literal_struct_{}",
-        &&name.to_string().to_case(Case::Snake)
+        name.to_string().to_case(Case::Snake)
     );
     let fd_data = {
         let mut errs = Vec::new();
         let mut variants = Vec::new();
-        let iter = input_data
-            .values
-            .iter()
-            .map(FieldDescriptorData::new)
-            .map(|r| match r {
+        for r in input_data.values.iter().map(FieldDescriptorData::new) {
+            match r {
                 Ok(v) => variants.push(v),
-                Err(e) => errs.push(e),
-            });
-        for _ in iter {}
-        if !errs.is_empty() {
-            let mut errs = errs.into_iter().flatten().peekable();
-            while let Some(err) = errs.next() {
-                if errs.peek().is_some() {
-                    emit_error!(err.0, "{}", err.1);
-                } else {
-                    abort!(err.0, "{}", err.1);
-                }
+                Err(e) => errs.extend(e),
             }
-            unreachable!()
-        } else {
-            variants
         }
+
+        if let [first_errs @ .., last_err] = &errs[..] {
+            for err in first_errs {
+                emit_error!(err.0, "{}", err.1);
+            }
+            abort!(last_err.0, "{}", last_err.1);
+        }
+        variants
     };
+
     let fields = fd_data.iter().map(|a| {
         let ts_type = LitStr::new(&a.value_ts, Span::call_site());
 
@@ -1398,21 +1367,27 @@ pub fn literal_typed_struct(item: TokenStream) -> TokenStream {
         pub struct #name;
 
         impl ::napi::bindgen_prelude::FromNapiValue for #name {
-            unsafe fn from_napi_value(__enunion_env: ::napi::sys::napi_env, __enunion_napi_val: ::napi::sys::napi_value) -> ::napi::bindgen_prelude::Result<Self> {
-                let o = <::napi::JsObject as ::napi::bindgen_prelude::FromNapiValue>::from_napi_value(__enunion_env, __enunion_napi_val)?;
+            unsafe fn from_napi_value(
+                __enunion_env: ::napi::sys::napi_env,
+                __enunion_napi_val: ::napi::sys::napi_value
+            ) -> ::napi::bindgen_prelude::Result<Self> {
+                let o = <::napi::JsObject as ::napi::bindgen_prelude::FromNapiValue>::from_napi_value(
+                    __enunion_env,
+                    __enunion_napi_val
+                )?;
                 #(
                     match #get_field {
                         Some(value) => {
                             if !matches!(value, #consts) {
-                                let json_value = &o;
-                                let full_value = ::enunion::stringify_json_value(__enunion_env, json_value);
-                                return Err(::napi::Error::from_reason(format!("Value \"{}\" was found, but it wasn't equal to {:?} {}", #js_names, #consts, full_value)));
+                                let full_value = ::enunion::stringify_json_value(__enunion_env, &o);
+                                return Err(::enunion::fail_incorrect_literal(
+                                    #js_names, &format_args!("{:?}", #consts), &full_value
+                                ));
                             }
                         }
                         None => {
-                            let json_value = &o;
-                            let full_value = ::enunion::stringify_json_value(__enunion_env, json_value);
-                            return Err(::napi::Error::from_reason(format!("Value \"{}\" was undefined or null. {}", #js_names, full_value)));
+                            let full_value = ::enunion::stringify_json_value(__enunion_env, &o);
+                            return Err(::enunion::fail_nullish(#js_names, &full_value));
                         }
                     }
                 )*
@@ -1423,7 +1398,10 @@ pub fn literal_typed_struct(item: TokenStream) -> TokenStream {
         impl ::napi::bindgen_prelude::ValidateNapiValue for #name {}
 
         impl ::napi::bindgen_prelude::ToNapiValue for #name {
-            unsafe fn to_napi_value(__enunion_env: ::napi::sys::napi_env, val: Self) -> ::napi::bindgen_prelude::Result<::napi::sys::napi_value> {
+            unsafe fn to_napi_value(
+                __enunion_env: ::napi::sys::napi_env,
+                val: Self
+            ) -> ::napi::bindgen_prelude::Result<::napi::sys::napi_value> {
                 let env = unsafe { ::napi::Env::from_raw(__enunion_env) };
                 let mut new_object = env.create_object()?;
                 #(
