@@ -1,0 +1,8 @@
+[package]
+name = "xtask"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+enunion-helper = { path = "../enunion-helper" }
+tokio = { version = "1.38.0", features = ["full"] }
