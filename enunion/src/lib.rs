@@ -2,6 +2,77 @@ pub use enunion_derive::*;
 use napi::{Env, JsFunction, JsObject, NapiRaw};
 use std::fmt::Arguments;
 
+/// This macro is applied to Rust enums. It generates code that will expose the enum to TypeScript as a discriminated union. It uses `napi` to accomplish this.
+/// Enunion also handles automatically converting between the two representations, in Rust you can define `#[napi]` methods that accept the enum as an argument, or return an instance of that enum.
+/// The TypeScript will be free to handle it as a discriminated union, the Rust can handle it as an enum, and enunion will take care of translating at the boundary.
+///
+/// **This macro will not work if `napi` and `napi_derive` are not specified in the `[dependencies]` section of the `Cargo.toml`.**
+///
+///This macro has a companion library called `enunion-helper` which is appending the generated code from enunion to index.d.ts:
+///
+///
+/// use enunion_helper;
+/// let enunion_targer_dir = "path/to/generated/directory";
+/// let ts_dest_path = "path/to/dest/index.d.ts";
+/// enunion_helper::post_build(enunion_targer_dir.into(), ts_dest_path.into());
+///
+///
+/// # Params
+/// - `discriminant_repr`: The representation used by the discriminant field, one of "enum", "enum_str", "i64", "none", or "str". Default: "i64"
+/// - `discriminant_field_name`: The name of the discriminant field. Can be overridden here if you don't like the default. Default: `<enum_name>_type`, where `<enum_name>` is the name of your enum.
+/// This will be converted to lowerCamelCase in the TypeScript file.
+///
+/// # Discriminant Representation types
+///
+/// - "enum" - Generates a companion enum and uses variants from it to discriminate the union.
+/// - "enum_str" - Generates a companion string enum and uses variants from it to discriminate the union.
+/// - "i64" - Uses non-negative whole numbers to discriminate the union variants.
+/// - "str" - Uses strings to discriminate the union variants
+/// - "bool" - Only two variants are permitted, the first will be false, the second will be true.
+/// - "none" - No discriminant is used. The type is inferred from the fields present. If this is used
+/// then no two variants should share a structure. Variants will be tried top to bottom, and the
+/// first one that succeeds will be returned.
+///
+/// # Example Invocations
+/// `#[enunion::enunion]`
+///
+/// `#[enunion::enunion(discriminant_repr = "str")]`
+///
+/// `#[enunion::enunion(discriminant_field_name = "my_type")]`
+///
+/// `#[enunion::enunion(discriminant_repr = "str", discriminant_field_name = "my_type")]`
+///
+/// # Example
+///
+///
+/// use enunion::enunion;
+/// #[enunion::enunion]
+/// pub enum Foo {
+///     Bar,
+///     Baz {
+///         a: i32,
+///         b: u32,
+///         c: String,
+///         my_multi_word_field: i32,
+///     }
+/// }
+///
+/// #[napi]
+/// pub fn take_foo(f: Foo) -> Foo {
+///    assert!(matches!(f, Foo::Baz {a: 3, b: 2, c: _, my_multi_word_field: 2}));
+///     match f {
+///         Foo::Baz {c, ..} => assert_eq!(c, "Hello World"),
+///         _ => unreachable!(),
+///     }
+///     Foo::Baz {
+///         a: 1,
+///         b: 2,
+///         c: String::from("yo"),
+///         my_multi_word_field: 8,
+///     }
+/// }
+///
+
 #[doc(hidden)]
 pub unsafe fn stringify_json_value<V>(e: napi::sys::napi_env, json_value: V) -> String
 where

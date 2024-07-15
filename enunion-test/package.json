@@ -20,10 +20,10 @@
   },
   "scripts": {
     "artifacts": "napi artifacts",
-    "build": "enapi build --platform --release",
-    "build:debug": "enapi build --platform",
+    "build": "napi build --platform --release && cd .. && cargo run --package xtask",
+    "build:debug": "napi build --platform ",
     "prepublishOnly": "napi prepublish -t npm",
-    "test": "cargo test && jest",
+    "test": "jest",
     "version": "napi version"
   },
   "ava": {

@@ -19,24 +19,12 @@ enunion = { git = "https://github.com/NZXTCorp/enunion.git" }
 
 **The enunion macro will not work if `napi` and `napi_derive` are not specified in the `[dependencies]` section of the `Cargo.toml`.**
 
-This macro has a companion program called `enapi` which is a mostly transparent wrapper around the `napi` CLI. You must 
-use `enapi` instead of `napi` for your build. Otherwise the resulting TypeScript will not compile.
-Here's an example of what that might look like in your package.json file.
+This macro has a companion library called `enunion-helper` which is appending the generated code from enunion to index.d.ts:
 
-```json
-"scripts": {
-  "build": "enapi build --platform --release",
-},
+```rust
+enunion_helper::post_build(necessary_dir).await?;
 ```
-
-To install `enapi` execute this command inside a clone of this repository
-
-```
-cargo install --path ./enapi
-```
-
 In unusual circumstances `enunion` may leave behind some of the generated files. Add these to your .gitignore like so
-
 ```
 /enunion-generated-ts
 ```

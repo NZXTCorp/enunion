@@ -1,4 +1,4 @@
 [workspace]
-members = ["enunion", "enapi", "enunion-derive"]
+members = ["enunion", "enunion-helper", "enunion-derive", "xtask"]
 exclude = ["enunion-test"]
 resolver = "2"
