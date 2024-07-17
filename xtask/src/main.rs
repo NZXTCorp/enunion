@@ -7,10 +7,10 @@ async fn main() -> Result<(), ExitStatus> {
         .join("enunion-test");
 
     enunion_helper::post_build(
-        current_dir.clone(),
-        current_dir.join("index.d.ts"),
+        &current_dir.clone(),
+        &current_dir.join("index.d.ts"),
         true,
-        Some(current_dir.join("index.js")),
+        Some(&current_dir.join("index.js")),
         true,
     )
     .await?;
