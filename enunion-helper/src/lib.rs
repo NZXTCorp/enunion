@@ -3,7 +3,7 @@ use std::{
     fs::{self, OpenOptions},
     io,
     io::Write,
-    path::PathBuf,
+    path::Path,
     process::ExitStatus,
 };
 
@@ -20,15 +20,15 @@ pub use std::os::windows::process::ExitStatusExt;
 /// For TypeScript only.
 
 pub async fn post_build(
-    enunion_target_path: PathBuf,
-    definitions_file_path: PathBuf,
+    enunion_target_path: &Path,
+    definitions_file_path: &Path,
     is_platform: bool,
-    specified_js: Option<PathBuf>,
+    specified_js: Option<&Path>,
     remove_enunion_gen_folder: bool,
 ) -> Result<(), ExitStatus> {
     let enunion_path = enunion_target_path.join("enunion-generated-ts");
 
-    let mut out_ts = match OpenOptions::new().append(true).open(&definitions_file_path) {
+    let mut out_ts = match OpenOptions::new().append(true).open(definitions_file_path) {
         Ok(out_ts) => out_ts,
         Err(e) => {
             eprintln!("Could not open file {:?}: {:?}", definitions_file_path, e);
@@ -40,11 +40,7 @@ pub async fn post_build(
         Some(
             OpenOptions::new()
                 .append(true)
-                .open(
-                    specified_js
-                        .clone()
-                        .unwrap_or_else(|| PathBuf::from("index.js")),
-                )
+                .open(specified_js.unwrap_or(Path::new("index.js")))
                 .map_err(|e| {
                     eprintln!("Could not open JavaScript file: {:?}", e);
                     ExitStatus::from_raw(1)
