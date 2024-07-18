@@ -31,7 +31,10 @@ pub async fn post_build(
     let mut out_ts = match OpenOptions::new().append(true).open(definitions_file_path) {
         Ok(out_ts) => out_ts,
         Err(e) => {
-            eprintln!("Could not open file {:?}: {:?}", definitions_file_path, e);
+            eprintln!(
+                "Could not open file {}: {e:?}",
+                definitions_file_path.display()
+            );
             return Err(ExitStatus::from_raw(1));
         }
     };
@@ -53,10 +56,14 @@ pub async fn post_build(
     let read_dir_iter = match fs::read_dir(&enunion_path) {
         Ok(i) => i,
         Err(e) => {
-            eprintln!(
-                "Could not read directory {:?}, this may be because there was nothing to do. {:?}",
-                enunion_path, e
-            );
+            if e.kind() == io::ErrorKind::NotFound {
+                eprintln!(
+                    "`{}` not found, there may be nothing to do",
+                    enunion_path.display()
+                );
+                return Ok(());
+            }
+            eprintln!("Failed to open `{}`: {e:?}", enunion_path.display());
             return Err(ExitStatus::from_raw(1));
         }
     };
@@ -65,8 +72,8 @@ pub async fn post_build(
         Ok(entries) => entries,
         Err(e) => {
             eprintln!(
-                "Could not collect directory entries for {:?}. Reason: {:?}",
-                enunion_path, e
+                "Could not collect directory entries of `{}`. Reason: {e:?}",
+                enunion_path.display()
             );
             return Err(ExitStatus::from_raw(1));
         }
@@ -85,7 +92,7 @@ pub async fn post_build(
         let content = match fs::read_to_string(&path) {
             Ok(c) => c,
             Err(e) => {
-                eprintln!("Failed to read file {:?}: {:?}", path, e);
+                eprintln!("Failed to read file `{}`: {e:?}", path.display());
                 return Err(ExitStatus::from_raw(1));
             }
         };
@@ -102,8 +109,8 @@ pub async fn post_build(
     writeln!(ts_content, "// -- END ENUNION GENERATED CODE --").unwrap();
     out_ts.write_all(ts_content.as_bytes()).map_err(|e| {
         eprintln!(
-            "Failed to write to file {:?}: {:?}",
-            definitions_file_path, e
+            "Failed to write to file `{}`: {e:?}",
+            definitions_file_path.display()
         );
         ExitStatus::from_raw(1)
     })?;
@@ -112,11 +119,12 @@ pub async fn post_build(
         writeln!(js, "// -- END ENUNION GENERATED CODE --").unwrap();
         if let Some(ref mut out_js) = out_js {
             out_js.write_all(js.as_bytes()).map_err(|e| {
-                eprintln!("Failed to write to JavaScript file: {:?}", e);
+                eprintln!("Failed to write to JavaScript file: {e:?}");
                 ExitStatus::from_raw(1)
             })?;
         }
     }
+
     if remove_enunion_gen_folder {
         let _ = fs::remove_dir_all(enunion_path);
     }
